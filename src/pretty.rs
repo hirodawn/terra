@@ -126,7 +126,11 @@ struct Token {
 }
 
 pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usize, dark: bool, code_theme: &str) -> usize {
-    let buf = f.buffer_mut();
+    render_buf(f.buffer_mut(), area, src, scroll, dark, code_theme)
+}
+
+/// Paint the document into an arbitrary buffer (used by `render` and by tests).
+pub fn render_buf(buf: &mut Buffer, area: ratatui::layout::Rect, src: &str, scroll: usize, dark: bool, code_theme: &str) -> usize {
     let p = pal(dark);
     // clear
     fill_rect(buf, area, p.bg);
@@ -192,6 +196,10 @@ pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usi
                 ctx.push_style(Fmt { link: true, ..Default::default() });
                 ctx.push_text(format!("[¹{}]", tag));
                 ctx.styles.pop();
+            }
+            // Inline/raw HTML is passed through as literal text (DF spec: HTML is preserved).
+            Event::Html(h) | Event::InlineHtml(h) => {
+                ctx.push_text(h.into_string());
             }
             _ => {}
         }
@@ -915,4 +923,232 @@ fn split_tokens(s: &str) -> Vec<String> {
 fn _silence() {
     let _ = markdown::render_lines;
     let _ = (Line::default(), Span::raw(""));
+}
+
+/// Daring Fireball "Markdown: Syntax" (John Gruber) compliance tests.
+/// Each test feeds a construct from the spec and asserts the rendered output
+/// contains the right content with the raw markdown syntax consumed.
+#[cfg(test)]
+mod df_spec {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn render(md: &str) -> String {
+        let area = Rect::new(0, 0, 100, 60);
+        let mut buf = Buffer::empty(area);
+        render_buf(&mut buf, area, md, 0, true, "base16-ocean.dark");
+        let mut s = String::new();
+        for y in 0..area.height {
+            let mut row = String::new();
+            for x in 0..area.width {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            s.push_str(row.trim_end());
+            s.push('\n');
+        }
+        s
+    }
+    /// collapse runs of whitespace into single spaces, for robust matching
+    fn flat(md: &str) -> String {
+        render(md).split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    // ---- Overview: inline HTML is preserved ----
+    #[test]
+    fn inline_html_preserved() {
+        assert!(flat("a <b>bold</b> word").contains("bold"));
+    }
+
+    // ---- Paragraphs & line breaks ----
+    #[test]
+    fn paragraph_joins_lines() {
+        // soft line breaks join into one paragraph
+        assert!(flat("line one\nline two").contains("line one line two"));
+    }
+    #[test]
+    fn blank_line_separates_paragraphs() {
+        let f = flat("first paragraph\n\nsecond paragraph");
+        assert!(f.contains("first paragraph"));
+        assert!(f.contains("second paragraph"));
+    }
+
+    // ---- Atx headers (all six levels) ----
+    #[test]
+    fn atx_headers() {
+        let md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6";
+        let f = flat(md);
+        for lvl in 1..=6 {
+            let word = format!("H{}", lvl);
+            assert!(f.contains(&word), "missing {}", word);
+            let raw = format!("# {}", word);
+            assert!(!f.contains(&raw), "raw syntax leaked: {}", raw);
+        }
+    }
+
+    // ---- Setext headers ----
+    #[test]
+    fn setext_h1() {
+        let f = flat("Title One\n===");
+        assert!(f.contains("Title One"));
+        assert!(!f.contains("===")); // underline consumed
+    }
+    #[test]
+    fn setext_h2() {
+        // use '***' rule guard so '---' is unambiguously a setext underline
+        let f = flat("Section\n---");
+        assert!(f.contains("Section"));
+    }
+
+    // ---- Blockquotes (incl. nested) ----
+    #[test]
+    fn blockquote() {
+        assert!(flat("> a quoted line").contains("a quoted line"));
+    }
+    #[test]
+    fn nested_blockquote() {
+        assert!(flat("> > deeply nested").contains("deeply nested"));
+    }
+
+    // ---- Lists ----
+    #[test]
+    fn unordered_lists_all_markers() {
+        for m in ["*", "+", "-"] {
+            let md = format!("{} alpha\n{} beta", m, m);
+            let f = flat(&md);
+            assert!(f.contains("alpha"), "marker {} alpha", m);
+            assert!(f.contains("beta"), "marker {} beta", m);
+        }
+    }
+    #[test]
+    fn ordered_list() {
+        let f = flat("1. first\n2. second\n3. third");
+        assert!(f.contains("first"));
+        assert!(f.contains("second"));
+        assert!(f.contains("third"));
+        assert!(f.contains("1."));
+        assert!(f.contains("3."));
+    }
+    #[test]
+    fn nested_list() {
+        let f = flat("- top\n  - child");
+        assert!(f.contains("top"));
+        assert!(f.contains("child"));
+    }
+
+    // ---- Indented code block ----
+    #[test]
+    fn indented_code_block() {
+        let f = flat("    let x = 1;");
+        assert!(f.contains("let x = 1;"));
+    }
+
+    // ---- Horizontal rules ----
+    #[test]
+    fn horizontal_rules_all() {
+        for r in ["***", "---", "___", "* * *", "- - -"] {
+            assert!(flat(r).contains("✦"), "rule {:?} not ornamented", r);
+        }
+    }
+
+    // ---- Links ----
+    #[test]
+    fn inline_link() {
+        let f = flat("see [the docs](https://example.com/docs)");
+        assert!(f.contains("the docs"));
+        assert!(!f.contains("[the docs]"));
+        assert!(!f.contains("(https://example.com/docs)"));
+    }
+    #[test]
+    fn reference_link() {
+        let md = "go [home][1]\n\n[1]: https://example.com";
+        let f = flat(md);
+        assert!(f.contains("home"));
+        assert!(!f.contains("[home]"));
+    }
+    #[test]
+    fn implicit_reference_link() {
+        let md = "visit [Example][]\n\n[Example]: https://example.com";
+        assert!(flat(md).contains("Example"));
+    }
+    #[test]
+    fn automatic_link() {
+        let f = flat("<https://example.com>");
+        assert!(f.contains("example.com"));
+    }
+
+    // ---- Emphasis ----
+    #[test]
+    fn italic_star() {
+        let f = flat("this is *italic* text");
+        assert!(f.contains("italic"));
+        assert!(!f.contains("*italic*"));
+    }
+    #[test]
+    fn italic_underscore() {
+        let f = flat("this is _italic_ text");
+        assert!(f.contains("italic"));
+        assert!(!f.contains("_italic_"));
+    }
+    #[test]
+    fn bold_star() {
+        let f = flat("this is **bold** text");
+        assert!(f.contains("bold"));
+        assert!(!f.contains("**bold**"));
+    }
+    #[test]
+    fn bold_underscore() {
+        let f = flat("this is __bold__ text");
+        assert!(f.contains("bold"));
+        assert!(!f.contains("__bold__"));
+    }
+    #[test]
+    fn bold_italic_combined() {
+        let f = flat("***both***");
+        assert!(f.contains("both"));
+        assert!(!f.contains("***"));
+    }
+
+    // ---- Inline code ----
+    #[test]
+    fn inline_code() {
+        let f = flat("use `cargo run` now");
+        assert!(f.contains("cargo run"));
+        assert!(!f.contains("`cargo run`"));
+    }
+    #[test]
+    fn inline_code_multibacktick() {
+        let f = flat("a ``literal ` backtick`` b");
+        assert!(f.contains("literal ` backtick"));
+    }
+
+    // ---- Images ----
+    #[test]
+    fn image_alt_text() {
+        let f = flat("![a cute cat](cat.png)");
+        assert!(f.contains("a cute cat"));
+        assert!(!f.contains("![a cute cat]"));
+    }
+
+    // ---- Backslash escapes ----
+    #[test]
+    fn backslash_escape() {
+        let f = flat(r"\*not italic\*");
+        assert!(f.contains("*not italic*"));
+    }
+
+    // ---- Automatic email link ----
+    #[test]
+    fn autolink_email() {
+        let f = flat("<user@example.com>");
+        assert!(f.contains("user@example.com"));
+    }
+
+    // ---- Fenced code block (GFM, widely expected alongside the spec) ----
+    #[test]
+    fn fenced_code_block() {
+        let f = flat("```rust\nfn main() {}\n```");
+        assert!(f.contains("fn main()"));
+        assert!(f.contains("rust")); // language label in card
+    }
 }
