@@ -202,9 +202,9 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
 
     // CSS-grade renderer paints directly into the buffer.
     app.ensure_preview();
-    let src = app.buf.text();
-    let _ = src;
-    crate::pretty::render(f, inner, &app.buf.text(), app.preview_scroll);
+    let dark = !matches!(app.theme, crate::app::Theme::Light);
+    let h = crate::pretty::render(f, inner, &app.buf.text(), app.preview_scroll, dark, &app.preview_theme);
+    app.preview_content_height = h;
 
     let _ = focused;
 }

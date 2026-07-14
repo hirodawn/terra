@@ -36,20 +36,15 @@ pub struct Pal {
     pub checkbox_off: Color,
 }
 
-fn pal() -> &'static Pal {
-    static P: OnceLock<Pal> = OnceLock::new();
-    P.get_or_init(|| Pal {
+fn dark_pal() -> Pal {
+    Pal {
         bg: Color::Rgb(13, 17, 23),
         text: Color::Rgb(201, 209, 217),
         strong: Color::Rgb(245, 247, 250),
         muted: Color::Rgb(139, 148, 158),
         h: [
-            Color::Rgb(255, 166, 87),   // h1 warm
-            Color::Rgb(121, 192, 255),  // h2 blue
-            Color::Rgb(210, 168, 255),  // h3 purple
-            Color::Rgb(115, 201, 144),  // h4 green
-            Color::Rgb(255, 176, 176),  // h5 pink
-            Color::Rgb(139, 148, 158),  // h6 muted
+            Color::Rgb(255, 166, 87), Color::Rgb(121, 192, 255), Color::Rgb(210, 168, 255),
+            Color::Rgb(115, 201, 144), Color::Rgb(255, 176, 176), Color::Rgb(139, 148, 158),
         ],
         rule: Color::Rgb(48, 54, 61),
         code_bg: Color::Rgb(22, 27, 34),
@@ -65,7 +60,44 @@ fn pal() -> &'static Pal {
         ornament: Color::Rgb(255, 166, 87),
         checkbox_on: Color::Rgb(115, 201, 144),
         checkbox_off: Color::Rgb(110, 118, 129),
-    })
+    }
+}
+
+fn light_pal() -> Pal {
+    Pal {
+        bg: Color::Rgb(250, 250, 246),
+        text: Color::Rgb(36, 41, 47),
+        strong: Color::Rgb(15, 20, 25),
+        muted: Color::Rgb(108, 113, 122),
+        h: [
+            Color::Rgb(190, 63, 25), Color::Rgb(5, 80, 174), Color::Rgb(95, 50, 155),
+            Color::Rgb(26, 99, 52), Color::Rgb(200, 85, 85), Color::Rgb(108, 113, 122),
+        ],
+        rule: Color::Rgb(208, 215, 222),
+        code_bg: Color::Rgb(243, 244, 246),
+        code_border: Color::Rgb(208, 215, 222),
+        inline_code_bg: Color::Rgb(230, 232, 238),
+        inline_code_fg: Color::Rgb(5, 80, 174),
+        quote_bar: Color::Rgb(234, 117, 70),
+        quote_bg: Color::Rgb(243, 244, 246),
+        link: Color::Rgb(9, 105, 218),
+        table_head_bg: Color::Rgb(238, 240, 243),
+        table_alt_bg: Color::Rgb(247, 248, 250),
+        table_border: Color::Rgb(208, 215, 222),
+        ornament: Color::Rgb(190, 63, 25),
+        checkbox_on: Color::Rgb(26, 99, 52),
+        checkbox_off: Color::Rgb(150, 156, 166),
+    }
+}
+
+fn pal(dark: bool) -> &'static Pal {
+    static D: OnceLock<Pal> = OnceLock::new();
+    static L: OnceLock<Pal> = OnceLock::new();
+    if dark {
+        D.get_or_init(dark_pal)
+    } else {
+        L.get_or_init(light_pal)
+    }
 }
 
 struct Syntax {
@@ -93,9 +125,9 @@ struct Token {
     f: Fmt,
 }
 
-pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usize) {
+pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usize, dark: bool, code_theme: &str) -> usize {
     let buf = f.buffer_mut();
-    let p = pal();
+    let p = pal(dark);
     // clear
     fill_rect(buf, area, p.bg);
     let pad = 2u16;
@@ -118,6 +150,7 @@ pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usi
         y: 0i64,
         p,
         max_y: area.y as i64 + area.height as i64,
+        code_theme: code_theme.to_string(),
     };
 
     let mut ctx = Ctx {
@@ -163,6 +196,7 @@ pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usi
             _ => {}
         }
     }
+    pt.content_height()
 }
 
 struct Painter<'a> {
@@ -174,6 +208,7 @@ struct Painter<'a> {
     y: i64,
     max_y: i64,
     p: &'static Pal,
+    code_theme: String,
 }
 
 #[derive(PartialEq)]
@@ -394,6 +429,9 @@ impl<'a> Painter<'a> {
     fn advance(&mut self) {
         self.y += 1;
     }
+    fn content_height(&self) -> usize {
+        self.y as usize
+    }
     fn blank(&mut self) {
         self.advance();
     }
@@ -504,7 +542,7 @@ impl<'a> Painter<'a> {
             self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, p.quote_bg);
             self.paint_quote_bars(self.y, quote_depth);
         }
-        let rows = wrap_tokens(tokens, width);
+        let rows = wrap_tokens(tokens, width, self.p);
         for row in &rows {
             if quote_depth > 0 {
                 self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, p.quote_bg);
@@ -549,7 +587,7 @@ impl<'a> Painter<'a> {
         } else {
             ("• ".into(), Style::default().fg(p.ornament))
         };
-        let rows = wrap_tokens(tokens, width.max(2));
+        let rows = wrap_tokens(tokens, width.max(2), self.p);
         for (i, row) in rows.iter().enumerate() {
             if i == 0 {
                 self.write_str(bx, self.y, &marker, marker_style);
@@ -606,7 +644,7 @@ impl<'a> Painter<'a> {
                 .or_else(|| sa.ss.find_syntax_by_extension(lang))
                 .unwrap_or_else(|| sa.ss.find_syntax_plain_text())
         };
-        let theme = sa.ts.themes.get("base16-ocean.dark").cloned();
+        let theme = sa.ts.themes.get(&self.code_theme).cloned();
         let code_style = Style::default().fg(p.text).bg(p.code_bg);
         for raw in code.trim_end_matches('\n').lines() {
             // bg fill + side bars
@@ -774,11 +812,10 @@ struct CellSpec {
 }
 
 /// Wrap a flat token list into rows of styled cells fitting `width`.
-fn wrap_tokens(tokens: &[Token], width: usize) -> Vec<Vec<CellSpec>> {
+fn wrap_tokens(tokens: &[Token], width: usize, p: &Pal) -> Vec<Vec<CellSpec>> {
     let width = width.max(1);
     let mut rows: Vec<Vec<CellSpec>> = vec![Vec::new()];
     let mut cur = 0usize;
-    let p = pal();
     for tok in tokens {
         let base = style_for_fmt(tok.f, p);
         for c in tok.s.chars() {

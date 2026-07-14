@@ -39,6 +39,12 @@ struct Args {
     /// Goto line before dumping (for testing).
     #[arg(long)]
     goto: Option<usize>,
+    /// Preview scroll offset for dump (for testing).
+    #[arg(long)]
+    pscroll: Option<usize>,
+    /// Force light preview theme for dump (for testing).
+    #[arg(long)]
+    light: bool,
     /// Show outline popup in dump (for testing).
     #[arg(long)]
     outline: bool,
@@ -91,6 +97,13 @@ fn main() -> io::Result<()> {
         if let Some(n) = args.goto {
             app.goto_line(n);
         }
+        if let Some(s) = args.pscroll {
+            app.preview_scroll = s;
+        }
+        if args.light {
+            app.theme = app::Theme::Light;
+            app.preview_theme = "InspiredGitHub".to_string();
+        }
         if args.outline {
             app.outline_open = true;
         }
@@ -134,7 +147,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io::
             app.sync_preview_to_cursor();
         } else {
             app.ensure_preview();
-            app.preview_scroll = app.preview_scroll.min(app.wrapped_preview.len().saturating_sub(1));
+            app.preview_scroll = app.preview_scroll.min(app.preview_content_height.saturating_sub(1));
         }
 
         terminal.draw(|f| ui::draw(f, app))?;
@@ -359,7 +372,7 @@ fn handle_preview_key(key: KeyEvent, app: &mut App) {
             app.preview_scroll = app.preview_scroll.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let max = app.wrapped_preview.len().saturating_sub(app.preview_height);
+            let max = app.preview_content_height.saturating_sub(app.preview_height);
             if app.preview_scroll < max {
                 app.preview_scroll += 1;
             }
@@ -368,12 +381,12 @@ fn handle_preview_key(key: KeyEvent, app: &mut App) {
             app.preview_scroll = app.preview_scroll.saturating_sub(app.preview_height.saturating_sub(1));
         }
         KeyCode::PageDown => {
-            let max = app.wrapped_preview.len().saturating_sub(app.preview_height);
+            let max = app.preview_content_height.saturating_sub(app.preview_height);
             app.preview_scroll = (app.preview_scroll + app.preview_height.saturating_sub(1)).min(max);
         }
         KeyCode::Char('g') => app.preview_scroll = 0,
         KeyCode::Char('G') => {
-            app.preview_scroll = app.wrapped_preview.len().saturating_sub(app.preview_height);
+            app.preview_scroll = app.preview_content_height.saturating_sub(app.preview_height);
         }
         _ => {}
     }
@@ -485,7 +498,7 @@ fn handle_mouse(m: MouseEvent, app: &mut App) {
     match m.kind {
         MouseEventKind::ScrollDown => {
             if app.focus == Focus::Preview {
-                let max = app.wrapped_preview.len().saturating_sub(app.preview_height);
+                let max = app.preview_content_height.saturating_sub(app.preview_height);
                 if app.preview_scroll < max {
                     app.preview_scroll += 1;
                 }
@@ -537,28 +550,28 @@ fn print_buffer(backend: &TestBackend, width: u16, height: u16) {
             let s = cell.style();
             if Some(s) != last_style {
                 let fg = s.fg.unwrap_or(ratatui::style::Color::Reset);
-                let code = match fg {
-                    ratatui::style::Color::Reset => "39",
-                    ratatui::style::Color::Red | ratatui::style::Color::LightRed => "31",
-                    ratatui::style::Color::Green | ratatui::style::Color::LightGreen => "32",
-                    ratatui::style::Color::Yellow | ratatui::style::Color::LightYellow => "33",
-                    ratatui::style::Color::Blue | ratatui::style::Color::LightBlue => "34",
-                    ratatui::style::Color::Magenta | ratatui::style::Color::LightMagenta => "35",
-                    ratatui::style::Color::Cyan | ratatui::style::Color::LightCyan => "36",
-                    _ => "37",
-                };
-                line.push_str(&format!("\x1b[{}m", code));
+                line.push_str("\x1b[0m");
+                match fg {
+                    ratatui::style::Color::Reset => line.push_str("\x1b[39m"),
+                    ratatui::style::Color::Rgb(r, g, b) => line.push_str(&format!("\x1b[38;2;{};{};{}m", r, g, b)),
+                    ratatui::style::Color::Red | ratatui::style::Color::LightRed => line.push_str("\x1b[31m"),
+                    ratatui::style::Color::Green | ratatui::style::Color::LightGreen => line.push_str("\x1b[32m"),
+                    ratatui::style::Color::Yellow | ratatui::style::Color::LightYellow => line.push_str("\x1b[33m"),
+                    ratatui::style::Color::Blue | ratatui::style::Color::LightBlue => line.push_str("\x1b[34m"),
+                    ratatui::style::Color::Magenta | ratatui::style::Color::LightMagenta => line.push_str("\x1b[35m"),
+                    ratatui::style::Color::Cyan | ratatui::style::Color::LightCyan => line.push_str("\x1b[36m"),
+                    _ => line.push_str("\x1b[37m"),
+                }
                 // background
                 if let Some(bg) = s.bg {
-                    let bgc = match bg {
-                        ratatui::style::Color::Yellow | ratatui::style::Color::LightYellow => "43",
-                        ratatui::style::Color::Green | ratatui::style::Color::LightGreen => "42",
-                        ratatui::style::Color::Red | ratatui::style::Color::LightRed => "41",
-                        ratatui::style::Color::Blue | ratatui::style::Color::LightBlue => "44",
-                        ratatui::style::Color::Rgb(_, _, _) => "100",
-                        _ => "49",
+                    match bg {
+                        ratatui::style::Color::Rgb(r, g, b) => line.push_str(&format!("\x1b[48;2;{};{};{}m", r, g, b)),
+                        ratatui::style::Color::Yellow | ratatui::style::Color::LightYellow => line.push_str("\x1b[43m"),
+                        ratatui::style::Color::Green | ratatui::style::Color::LightGreen => line.push_str("\x1b[42m"),
+                        ratatui::style::Color::Red | ratatui::style::Color::LightRed => line.push_str("\x1b[41m"),
+                        ratatui::style::Color::Blue | ratatui::style::Color::LightBlue => line.push_str("\x1b[44m"),
+                        _ => line.push_str("\x1b[49m"),
                     };
-                    line.push_str(&format!("\x1b[{}m", bgc));
                 } else {
                     line.push_str("\x1b[49m");
                 }

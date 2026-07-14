@@ -86,7 +86,7 @@ pub struct App {
     pub cached_rev: u64,
     pub cached_lines: Vec<ratatui::text::Line<'static>>,
     pub cache_width: usize,
-    pub wrapped_preview: Vec<ratatui::text::Line<'static>>,
+    pub preview_content_height: usize,
     pub last_status_tick: std::time::Instant,
 }
 
@@ -129,7 +129,7 @@ impl App {
             cached_rev: u64::MAX,
             cached_lines: Vec::new(),
             cache_width: 0,
-            wrapped_preview: Vec::new(),
+            preview_content_height: 0,
             last_status_tick: std::time::Instant::now(),
         }
     }
@@ -370,9 +370,8 @@ impl App {
         if !self.sync_preview {
             return;
         }
-        let total = self.buf.line_count().max(1);
-        let ratio = (self.buf.cursor_line as f64) / (total as f64);
-        let max = self.wrapped_preview.len().saturating_sub(self.preview_height);
+        let ratio = (self.buf.cursor_line as f64) / (self.buf.line_count().max(1) as f64);
+        let max = self.preview_content_height.saturating_sub(self.preview_height);
         self.preview_scroll = ((ratio * max as f64) as usize).min(max);
     }
 
