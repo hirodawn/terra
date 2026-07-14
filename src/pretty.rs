@@ -367,7 +367,12 @@ impl Ctx {
                 }
             }
             TagEnd::CodeBlock => {
-                pt.code_card(&self.code_lang, &self.pending_code);
+                let lang = self.code_lang.trim().to_lowercase();
+                if lang == "mermaid" || lang == "plantuml" || lang == "puml" {
+                    pt.diagram_card(&lang, &self.pending_code);
+                } else {
+                    pt.code_card(&self.code_lang, &self.pending_code);
+                }
                 self.pending_code.clear();
                 self.in_code = false;
             }
@@ -617,6 +622,46 @@ impl<'a> Painter<'a> {
         for t in tokens {
             cx = self.write_str(cx, self.y, &t.s, self.style_for(t.f, None));
         }
+        self.advance();
+        self.blank();
+    }
+
+    fn diagram_card(&mut self, lang: &str, code: &str) {
+        let p = self.p;
+        self.blank();
+        let w = self.inner_w as u16;
+        let border = Style::default().fg(p.code_border);
+        let label_style = Style::default().fg(p.muted);
+        // top border with language label
+        self.put(self.x0, self.y, '╭', border);
+        let mut cx = self.x0 + 1;
+        let label = format!(" {} diagram ", lang);
+        for c in label.chars() {
+            self.put(cx, self.y, c, label_style);
+            cx += 1;
+        }
+        while cx < self.x0 + w - 1 {
+            self.put(cx, self.y, '─', border);
+            cx += 1;
+        }
+        self.put(self.x0 + w - 1, self.y, '╮', border);
+        self.advance();
+        // body: paint the diagram using ABSOLUTE screen coords (render_block draws
+        // directly into the buffer at absolute positions).
+        let body_y_abs = self.screen_y(self.y).unwrap_or(self.area.y);
+        let body_h = (self.max_y as i64 - body_y_abs as i64).max(1) as u16;
+        let body_rect = ratatui::layout::Rect { x: self.x0, y: body_y_abs, width: w, height: body_h };
+        let h = crate::diagram::render_block(self.buf, body_rect, lang, code);
+        // advance y by the diagram height
+        for _ in 0..h {
+            self.advance();
+        }
+        // bottom border
+        self.put(self.x0, self.y, '╰', border);
+        for i in 1..w - 1 {
+            self.put(self.x0 + i, self.y, '─', border);
+        }
+        self.put(self.x0 + w - 1, self.y, '╯', border);
         self.advance();
         self.blank();
     }

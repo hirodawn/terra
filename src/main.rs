@@ -2,6 +2,7 @@
 
 mod app;
 mod buffer;
+mod diagram;
 mod markdown;
 mod pretty;
 mod ui;
