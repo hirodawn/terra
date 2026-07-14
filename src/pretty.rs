@@ -1,0 +1,881 @@
+//! A "CSS-grade" Markdown preview renderer for the terminal.
+//!
+//! Instead of emitting a flat list of styled lines, this module *paints* blocks
+//! directly into the frame buffer: full-width background fills, rounded "card"
+//! borders for code, colored left bars for quotes, hanging-indented lists, boxed
+//! tables, and rule-with-ornament headings. The goal: not look like a TUI.
+
+use crate::markdown;
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use ratatui::buffer::Buffer;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::Frame;
+use std::sync::OnceLock;
+
+/// Curated dark palette (GitHub-dark inspired, refined).
+pub struct Pal {
+    pub bg: Color,
+    pub text: Color,
+    pub strong: Color,
+    pub muted: Color,
+    pub h: [Color; 6],
+    pub rule: Color,
+    pub code_bg: Color,
+    pub code_border: Color,
+    pub inline_code_bg: Color,
+    pub inline_code_fg: Color,
+    pub quote_bar: Color,
+    pub quote_bg: Color,
+    pub link: Color,
+    pub table_head_bg: Color,
+    pub table_alt_bg: Color,
+    pub table_border: Color,
+    pub ornament: Color,
+    pub checkbox_on: Color,
+    pub checkbox_off: Color,
+}
+
+fn pal() -> &'static Pal {
+    static P: OnceLock<Pal> = OnceLock::new();
+    P.get_or_init(|| Pal {
+        bg: Color::Rgb(13, 17, 23),
+        text: Color::Rgb(201, 209, 217),
+        strong: Color::Rgb(245, 247, 250),
+        muted: Color::Rgb(139, 148, 158),
+        h: [
+            Color::Rgb(255, 166, 87),   // h1 warm
+            Color::Rgb(121, 192, 255),  // h2 blue
+            Color::Rgb(210, 168, 255),  // h3 purple
+            Color::Rgb(115, 201, 144),  // h4 green
+            Color::Rgb(255, 176, 176),  // h5 pink
+            Color::Rgb(139, 148, 158),  // h6 muted
+        ],
+        rule: Color::Rgb(48, 54, 61),
+        code_bg: Color::Rgb(22, 27, 34),
+        code_border: Color::Rgb(48, 54, 61),
+        inline_code_bg: Color::Rgb(40, 46, 60),
+        inline_code_fg: Color::Rgb(121, 192, 255),
+        quote_bar: Color::Rgb(255, 138, 92),
+        quote_bg: Color::Rgb(22, 27, 34),
+        link: Color::Rgb(88, 166, 255),
+        table_head_bg: Color::Rgb(28, 34, 47),
+        table_alt_bg: Color::Rgb(18, 22, 30),
+        table_border: Color::Rgb(48, 54, 61),
+        ornament: Color::Rgb(255, 166, 87),
+        checkbox_on: Color::Rgb(115, 201, 144),
+        checkbox_off: Color::Rgb(110, 118, 129),
+    })
+}
+
+struct Syntax {
+    ss: syntect::parsing::SyntaxSet,
+    ts: syntect::highlighting::ThemeSet,
+}
+fn syntax() -> &'static Syntax {
+    static S: OnceLock<Syntax> = OnceLock::new();
+    S.get_or_init(|| Syntax {
+        ss: syntect::parsing::SyntaxSet::load_defaults_newlines(),
+        ts: syntect::highlighting::ThemeSet::load_defaults(),
+    })
+}
+
+#[derive(Clone, Copy, Default)]
+struct Fmt {
+    bold: bool,
+    italic: bool,
+    strike: bool,
+    code: bool,
+    link: bool,
+}
+struct Token {
+    s: String,
+    f: Fmt,
+}
+
+pub fn render(f: &mut Frame, area: ratatui::layout::Rect, src: &str, scroll: usize) {
+    let buf = f.buffer_mut();
+    let p = pal();
+    // clear
+    fill_rect(buf, area, p.bg);
+    let pad = 2u16;
+    let x0 = area.x + pad;
+    let inner_w = (area.width as usize).saturating_sub(2 * pad as usize).max(1);
+
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_FOOTNOTES);
+    let parser = Parser::new_ext(src, opts);
+
+    let mut pt = Painter {
+        buf,
+        area,
+        x0,
+        inner_w,
+        scroll,
+        y: 0i64,
+        p,
+        max_y: area.y as i64 + area.height as i64,
+    };
+
+    let mut ctx = Ctx {
+        styles: Vec::new(),
+        list_stack: Vec::new(),
+        tok_stack: Vec::new(),
+        block_stack: Vec::new(),
+        quote_depth: 0,
+        task_pending: None,
+        table: TableBuild::default(),
+        pending_code: String::new(),
+        code_lang: String::new(),
+        in_code: false,
+    };
+
+    for ev in parser {
+        match ev {
+            Event::Start(tag) => ctx.start(tag, &mut pt),
+            Event::End(end) => {
+                let flushed = ctx.end(end, &mut pt);
+                let _ = flushed;
+            }
+            Event::Text(t) => {
+                if ctx.in_code {
+                    ctx.pending_code.push_str(&t);
+                } else {
+                    ctx.push_text(t.into_string());
+                }
+            }
+            Event::Code(c) => {
+                ctx.push_style(Fmt { code: true, ..Default::default() });
+                ctx.push_text(c.into_string());
+                ctx.styles.pop();
+            }
+            Event::SoftBreak | Event::HardBreak => ctx.soft_break(),
+            Event::Rule => pt.rule(),
+            Event::TaskListMarker(checked) => ctx.task_pending = Some(checked),
+            Event::FootnoteReference(tag) => {
+                ctx.push_style(Fmt { link: true, ..Default::default() });
+                ctx.push_text(format!("[¹{}]", tag));
+                ctx.styles.pop();
+            }
+            _ => {}
+        }
+    }
+}
+
+struct Painter<'a> {
+    buf: &'a mut Buffer,
+    area: ratatui::layout::Rect,
+    x0: u16,
+    inner_w: usize,
+    scroll: usize,
+    y: i64,
+    max_y: i64,
+    p: &'static Pal,
+}
+
+#[derive(PartialEq)]
+#[allow(dead_code)]
+enum Block {
+    None,
+    Paragraph,
+    Heading(HeadingLevel),
+    Item,
+    FootnoteDef,
+}
+
+#[derive(Clone)]
+struct ListInfo {
+    ordered: bool,
+    counter: u64,
+}
+#[derive(Default)]
+struct TableBuild {
+    rows: Vec<Vec<String>>,
+}
+
+struct Ctx {
+    styles: Vec<Fmt>,
+    list_stack: Vec<ListInfo>,
+    tok_stack: Vec<Vec<Token>>,
+    block_stack: Vec<Block>,
+    quote_depth: usize,
+    task_pending: Option<bool>,
+    table: TableBuild,
+    pending_code: String,
+    code_lang: String,
+    in_code: bool,
+}
+
+impl Ctx {
+    fn push_style(&mut self, f: Fmt) {
+        self.styles.push(f);
+    }
+    fn current_fmt(&self) -> Fmt {
+        let mut f = Fmt::default();
+        for s in &self.styles {
+            f.bold |= s.bold;
+            f.italic |= s.italic;
+            f.strike |= s.strike;
+            f.code |= s.code;
+            f.link |= s.link;
+        }
+        f
+    }
+    fn push_text(&mut self, s: String) {
+        // table cells accumulate raw
+        if !self.table.rows.is_empty() && self.block_stack.last().map_or(true, |b| !matches!(b, Block::Paragraph | Block::Item)) {
+            if let Some(row) = self.table.rows.last_mut() {
+                if let Some(cell) = row.last_mut() {
+                    cell.push_str(&s);
+                    return;
+                }
+            }
+        }
+        let f = self.current_fmt();
+        if let Some(top) = self.tok_stack.last_mut() {
+            for part in split_tokens(&s) {
+                if !part.is_empty() {
+                    top.push(Token { s: part, f });
+                }
+            }
+        }
+    }
+    fn soft_break(&mut self) {
+        if let Some(top) = self.tok_stack.last_mut() {
+            top.push(Token { s: "\n".into(), f: Fmt::default() });
+        }
+    }
+    fn begin(&mut self, b: Block) {
+        self.tok_stack.push(Vec::new());
+        self.block_stack.push(b);
+    }
+    fn start(&mut self, tag: Tag, pt: &mut Painter) {
+        match tag {
+            Tag::Paragraph => {
+                self.begin(Block::Paragraph);
+            }
+            Tag::Heading { level, .. } => {
+                self.begin(Block::Heading(level));
+            }
+            Tag::CodeBlock(kind) => {
+                self.pending_code.clear();
+                self.code_lang = match kind {
+                    pulldown_cmark::CodeBlockKind::Fenced(l) => l.into_string(),
+                    _ => String::new(),
+                };
+                self.in_code = true;
+            }
+            Tag::List(start) => {
+                // Flush a pending item's leading text so the parent renders before its children.
+                let need_flush = matches!(self.block_stack.last(), Some(Block::Item))
+                    && self.tok_stack.last().map_or(false, |t| !t.is_empty());
+                if need_flush {
+                    let toks = std::mem::take(self.tok_stack.last_mut().unwrap());
+                    let li = self.list_stack.last().cloned();
+                    let depth = self.list_stack.len().saturating_sub(1);
+                    pt.list_item(&toks, li, depth, None);
+                }
+                self.list_stack.push(ListInfo {
+                    ordered: start.is_some(),
+                    counter: start.unwrap_or(1),
+                });
+            }
+            Tag::Item => {
+                self.begin(Block::Item);
+            }
+            Tag::Emphasis => self.push_style(Fmt { italic: true, ..Default::default() }),
+            Tag::Strong => self.push_style(Fmt { bold: true, ..Default::default() }),
+            Tag::Strikethrough => self.push_style(Fmt { strike: true, ..Default::default() }),
+            Tag::Link { .. } => self.push_style(Fmt { link: true, ..Default::default() }),
+            Tag::Image { .. } => self.push_style(Fmt { link: true, ..Default::default() }),
+            Tag::BlockQuote(_) => self.quote_depth += 1,
+            Tag::Table(_) => {
+                self.table = TableBuild::default();
+            }
+            Tag::TableHead | Tag::TableRow => self.table.rows.push(Vec::new()),
+            Tag::TableCell => {
+                if let Some(r) = self.table.rows.last_mut() {
+                    r.push(String::new());
+                }
+            }
+            Tag::FootnoteDefinition(_) => {
+                self.begin(Block::FootnoteDef);
+            }
+            _ => {}
+        }
+    }
+    fn end(&mut self, end: TagEnd, pt: &mut Painter) {
+        match end {
+            TagEnd::Paragraph => {
+                if matches!(self.block_stack.last(), Some(Block::Paragraph)) {
+                    let toks = self.tok_stack.pop().unwrap_or_default();
+                    self.block_stack.pop();
+                    pt.paragraph(&toks, self.quote_depth);
+                }
+            }
+            TagEnd::Heading(level) => {
+                if matches!(self.block_stack.last(), Some(Block::Heading(_))) {
+                    let toks = self.tok_stack.pop().unwrap_or_default();
+                    self.block_stack.pop();
+                    pt.heading(&toks, level);
+                }
+            }
+            TagEnd::CodeBlock => {
+                pt.code_card(&self.code_lang, &self.pending_code);
+                self.pending_code.clear();
+                self.in_code = false;
+            }
+            TagEnd::List(_) => {
+                self.list_stack.pop();
+                if self.list_stack.is_empty() {
+                    pt.blank();
+                }
+            }
+            TagEnd::Item => {
+                let toks = self.tok_stack.pop().unwrap_or_default();
+                self.block_stack.pop();
+                if !toks.is_empty() {
+                    let li = self.list_stack.last().cloned();
+                    let depth = self.list_stack.len().saturating_sub(1);
+                    pt.list_item(&toks, li, depth, self.task_pending.take());
+                } else {
+                    let _ = self.task_pending.take();
+                }
+                if let Some(l) = self.list_stack.last_mut() {
+                    l.counter += 1;
+                }
+            }
+            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link | TagEnd::Image => {
+                self.styles.pop();
+            }
+            TagEnd::BlockQuote(_) => {
+                if self.quote_depth > 0 {
+                    self.quote_depth -= 1;
+                }
+                if self.quote_depth == 0 {
+                    pt.blank();
+                }
+            }
+            TagEnd::Table => {
+                pt.table(&self.table.rows);
+                self.table = TableBuild::default();
+            }
+            TagEnd::TableHead | TagEnd::TableRow | TagEnd::TableCell => {}
+            TagEnd::FootnoteDefinition => {
+                let toks = self.tok_stack.pop().unwrap_or_default();
+                self.block_stack.pop();
+                pt.footnote(&toks);
+            }
+            _ => {}
+        }
+    }
+}
+
+// extra fields via extension
+impl Ctx {
+    // placeholders for code-block text accumulation
+}
+
+// We need code accumulation fields; redeclare via a wrapper. Simplest: store on Ctx.
+// (Rust doesn't allow adding fields later, so redefine Ctx with them.)
+
+impl<'a> Painter<'a> {
+    fn screen_y(&self, ly: i64) -> Option<u16> {
+        let sy = self.area.y as i64 + ly - self.scroll as i64;
+        if sy >= self.area.y as i64 && sy < self.max_y {
+            Some(sy as u16)
+        } else {
+            None
+        }
+    }
+    fn advance(&mut self) {
+        self.y += 1;
+    }
+    fn blank(&mut self) {
+        self.advance();
+    }
+    fn put(&mut self, x: u16, ly: i64, ch: char, style: Style) {
+        if x < self.area.x + self.area.width {
+            if let Some(sy) = self.screen_y(ly) {
+                let cell = &mut self.buf[(x, sy)];
+                cell.set_char(ch);
+                cell.set_style(style);
+            }
+        }
+    }
+    fn fill_line(&mut self, ly: i64, x_start: u16, x_end: u16, bg: Color) {
+        if let Some(sy) = self.screen_y(ly) {
+            let lo = x_start.max(self.area.x);
+            let hi = x_end.min(self.area.x + self.area.width);
+            for x in lo..hi {
+                let cell = &mut self.buf[(x, sy)];
+                if cell.symbol() == " " {
+                    cell.set_char(' ');
+                }
+                let s = cell.style();
+                cell.set_style(Style { bg: Some(bg), ..s });
+            }
+        }
+    }
+    fn write_str(&mut self, x: u16, ly: i64, s: &str, style: Style) -> u16 {
+        let mut cx = x;
+        for c in s.chars() {
+            if c == '\n' {
+                continue;
+            }
+            let w = cell_w(c);
+            self.put(cx, ly, c, style);
+            cx += w as u16;
+        }
+        cx
+    }
+
+    // ---- blocks ----
+    fn heading(&mut self, tokens: &[Token], level: HeadingLevel) {
+        let p = self.p;
+        self.blank();
+        let idx = (level as usize - 1).min(5);
+        let color = p.h[idx];
+        // prefix marker for flavor
+        let prefix = match level {
+            HeadingLevel::H1 => "▍ ",
+            _ => "",
+        };
+        let mut cx = self.write_str(self.x0, self.y, prefix, Style::default().fg(color));
+        for t in tokens {
+            let st = self.style_for(t.f, Some(color));
+            cx = self.write_str(cx, self.y, &t.s, st);
+        }
+        self.advance();
+        if level == HeadingLevel::H1 || level == HeadingLevel::H2 {
+            self.hrule_raw(level == HeadingLevel::H1, color);
+        }
+        self.blank();
+    }
+
+    fn hrule_raw(&mut self, thick: bool, color: Color) {
+        let ch = if thick { '━' } else { '─' };
+        let st = Style::default().fg(color);
+        for i in 0..(self.inner_w as u16) {
+            self.put(self.x0 + i, self.y, ch, st);
+        }
+        self.advance();
+    }
+
+    fn rule(&mut self) {
+        // ornament rule: ────── ✦ ──────
+        self.blank();
+        let p = self.p;
+        let w = self.inner_w as u16;
+        let mid = " ✦ ";
+        let side = (w as i32 - mid.chars().count() as i32) / 2;
+        let side = if side < 1 { 1 } else { side as u16 };
+        let st = Style::default().fg(p.rule);
+        let orn = Style::default().fg(p.ornament);
+        let mut cx = self.x0;
+        for _ in 0..side {
+            self.put(cx, self.y, '─', st);
+            cx += 1;
+        }
+        for c in mid.chars() {
+            self.put(cx, self.y, c, orn);
+            cx += 1;
+        }
+        while cx < self.x0 + w {
+            self.put(cx, self.y, '─', st);
+            cx += 1;
+        }
+        self.advance();
+        self.blank();
+    }
+
+    fn paragraph(&mut self, tokens: &[Token], quote_depth: usize) {
+        let p = self.p;
+        let indent = (quote_depth * 3) as u16;
+        let wx = self.x0 + indent;
+        let width = (self.inner_w as u16).saturating_sub(indent) as usize;
+        if width < 4 {
+            return;
+        }
+        if quote_depth > 0 {
+            self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, p.quote_bg);
+            self.paint_quote_bars(self.y, quote_depth);
+        }
+        let rows = wrap_tokens(tokens, width);
+        for row in &rows {
+            if quote_depth > 0 {
+                self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, p.quote_bg);
+                self.paint_quote_bars(self.y, quote_depth);
+            }
+            let mut cx = wx;
+            for cs in row {
+                self.put(cx, self.y, cs.ch, cs.style);
+                cx += cell_w(cs.ch) as u16;
+            }
+            self.advance();
+        }
+        let _ = wx;
+        self.blank();
+    }
+
+    fn paint_quote_bars(&mut self, ly: i64, depth: usize) {
+        let p = self.p;
+        for d in 0..depth {
+            let x = self.x0 + (d * 3) as u16;
+            self.put(x, ly, '┃', Style::default().fg(p.quote_bar));
+        }
+    }
+
+    fn list_item(&mut self, tokens: &[Token], li: Option<ListInfo>, depth: usize, task: Option<bool>) {
+        let p = self.p;
+        let indent = (depth * 2) as u16;
+        let bx = self.x0 + indent;
+        let text_x = bx + 3;
+        let width = (self.inner_w as u16).saturating_sub(indent + 3) as usize;
+        // marker
+        let (marker, marker_style) = if let Some(t) = task {
+            if t { ("✔ ".to_string(), Style::default().fg(p.checkbox_on)) }
+            else { ("□ ".to_string(), Style::default().fg(p.checkbox_off)) }
+        } else if let Some(l) = &li {
+            if l.ordered {
+                (format!("{}. ", l.counter), Style::default().fg(p.muted))
+            } else {
+                let m = match depth % 3 { 1 => "◦ ", 2 => "▪ ", _ => "• " };
+                (m.to_string(), Style::default().fg(p.ornament))
+            }
+        } else {
+            ("• ".into(), Style::default().fg(p.ornament))
+        };
+        let rows = wrap_tokens(tokens, width.max(2));
+        for (i, row) in rows.iter().enumerate() {
+            if i == 0 {
+                self.write_str(bx, self.y, &marker, marker_style);
+            }
+            let mut cx = text_x;
+            for cs in row {
+                self.put(cx, self.y, cs.ch, cs.style);
+                cx += cell_w(cs.ch) as u16;
+            }
+            self.advance();
+        }
+    }
+
+    fn footnote(&mut self, tokens: &[Token]) {
+        let p = self.p;
+        let st = Style::default().fg(p.muted);
+        let mut cx = self.write_str(self.x0, self.y, "↳ ", Style::default().fg(p.ornament));
+        cx = self.write_str(cx, self.y, "", st);
+        for t in tokens {
+            cx = self.write_str(cx, self.y, &t.s, self.style_for(t.f, None));
+        }
+        self.advance();
+        self.blank();
+    }
+
+    fn code_card(&mut self, lang: &str, code: &str) {
+        let p = self.p;
+        self.blank();
+        let w = self.inner_w as u16;
+        let border = Style::default().fg(p.code_border);
+        let label_style = Style::default().fg(p.muted).add_modifier(Modifier::DIM);
+        // top border: ╭ ─ lang ─── ╮
+        self.put(self.x0, self.y, '╭', border);
+        let mut cx = self.x0 + 1;
+        let lang_display = if lang.is_empty() { "code".to_string() } else { lang.to_string() };
+        let label = format!(" {} ", lang_display);
+        for c in label.chars() {
+            self.put(cx, self.y, c, label_style);
+            cx += 1;
+        }
+        while cx < self.x0 + w - 1 {
+            self.put(cx, self.y, '─', border);
+            cx += 1;
+        }
+        self.put(self.x0 + w - 1, self.y, '╮', border);
+        self.advance();
+
+        // body
+        let sa = syntax();
+        let syntax_ref = if lang.is_empty() {
+            sa.ss.find_syntax_plain_text()
+        } else {
+            sa.ss.find_syntax_by_token(lang)
+                .or_else(|| sa.ss.find_syntax_by_extension(lang))
+                .unwrap_or_else(|| sa.ss.find_syntax_plain_text())
+        };
+        let theme = sa.ts.themes.get("base16-ocean.dark").cloned();
+        let code_style = Style::default().fg(p.text).bg(p.code_bg);
+        for raw in code.trim_end_matches('\n').lines() {
+            // bg fill + side bars
+            self.fill_line(self.y, self.x0, self.x0 + w, p.code_bg);
+            self.put(self.x0, self.y, '│', border);
+            self.put(self.x0 + w - 1, self.y, '│', border);
+            let text_x = self.x0 + 2;
+            if let Some(theme) = &theme {
+                use syntect::easy::HighlightLines;
+                let mut h = HighlightLines::new(syntax_ref, theme);
+                let regions = h.highlight_line(raw, &sa.ss).unwrap_or_default();
+                let mut cx = text_x;
+                for (st, s) in regions {
+                    let fg = synthect_to_ratatui(st, p.text);
+                    for c in s.chars() {
+                        if cx >= self.x0 + w - 1 {
+                            break;
+                        }
+                        self.put(cx, self.y, c, Style::default().fg(fg).bg(p.code_bg));
+                        cx += cell_w(c) as u16;
+                    }
+                }
+            } else {
+                self.write_str(text_x, self.y, raw, code_style);
+            }
+            self.advance();
+        }
+        // bottom border
+        self.put(self.x0, self.y, '╰', border);
+        for i in 1..w - 1 {
+            self.put(self.x0 + i, self.y, '─', border);
+        }
+        self.put(self.x0 + w - 1, self.y, '╯', border);
+        self.advance();
+        self.blank();
+    }
+
+    fn table(&mut self, rows: &[Vec<String>]) {
+        let p = self.p;
+        if rows.is_empty() {
+            return;
+        }
+        let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if cols == 0 {
+            return;
+        }
+        let pad = 1u16;
+        let mut widths = vec![0u16; cols];
+        for r in rows {
+            for (i, c) in r.iter().enumerate() {
+                widths[i] = widths[i].max(c.chars().count() as u16);
+            }
+        }
+        let border = Style::default().fg(p.table_border);
+        let head_bg = p.table_head_bg;
+        let alt_bg = p.table_alt_bg;
+        self.blank();
+        // top border  ┌──┬──┐
+        self.put(self.x0, self.y, '┌', border);
+        let mut cx = self.x0 + 1;
+        for (i, wd) in widths.iter().enumerate() {
+            for _ in 0..(wd + 2 * pad) { self.put(cx, self.y, '─', border); cx += 1; }
+            if i + 1 < cols { self.put(cx, self.y, '┬', border); cx += 1; }
+        }
+        self.put(cx, self.y, '┐', border);
+        self.advance();
+        for (ri, row) in rows.iter().enumerate() {
+            // cell bg fill
+            if ri == 0 {
+                self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, head_bg);
+            } else if ri % 2 == 0 {
+                self.fill_line(self.y, self.x0, self.x0 + self.inner_w as u16, alt_bg);
+            }
+            let mut cx = self.x0;
+            self.put(cx, self.y, '│', border);
+            cx += 1;
+            for ci in 0..cols {
+                let cell = row.get(ci).cloned().unwrap_or_default();
+                for _ in 0..pad {
+                    self.put(cx, self.y, ' ', Style::default());
+                    cx += 1;
+                }
+                let st = if ri == 0 {
+                    Style::default().fg(p.strong).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(p.text)
+                };
+                cx = self.write_str(cx, self.y, &cell, st);
+                let remaining = widths[ci] as i32 - cell.chars().count() as i32;
+                for _ in 0..remaining.max(0) {
+                    self.put(cx, self.y, ' ', Style::default());
+                    cx += 1;
+                }
+                for _ in 0..pad {
+                    self.put(cx, self.y, ' ', Style::default());
+                    cx += 1;
+                }
+                self.put(cx, self.y, '│', border);
+                cx += 1;
+            }
+            self.advance();
+            if ri == 0 {
+                // separator row
+                self.put(self.x0, self.y, '├', border);
+                let mut cx = self.x0 + 1;
+                for (i, wd) in widths.iter().enumerate() {
+                    for _ in 0..(wd + 2 * pad) {
+                        self.put(cx, self.y, '─', border);
+                        cx += 1;
+                    }
+                    if i + 1 < cols {
+                        self.put(cx, self.y, '┼', border);
+                        cx += 1;
+                    }
+                }
+                self.put(cx, self.y, '┤', border);
+                self.advance();
+            }
+        }
+        // bottom border └──┴──┘
+        self.put(self.x0, self.y, '└', border);
+        let mut cx = self.x0 + 1;
+        for (i, wd) in widths.iter().enumerate() {
+            for _ in 0..(wd + 2 * pad) { self.put(cx, self.y, '─', border); cx += 1; }
+            if i + 1 < cols { self.put(cx, self.y, '┴', border); cx += 1; }
+        }
+        self.put(cx, self.y, '┘', border);
+        self.advance();
+        self.blank();
+    }
+
+    fn style_for(&self, f: Fmt, heading_color: Option<Color>) -> Style {
+        let p = self.p;
+        let mut fg = if f.code {
+            p.inline_code_fg
+        } else if heading_color.is_some() {
+            heading_color.unwrap()
+        } else {
+            p.text
+        };
+        let bg = if f.code { p.inline_code_bg } else { p.bg };
+        if f.bold {
+            fg = p.strong;
+        }
+        let mut st = Style::default().fg(fg).bg(bg);
+        if f.bold {
+            st = st.add_modifier(Modifier::BOLD);
+        }
+        if f.italic {
+            st = st.add_modifier(Modifier::ITALIC);
+        }
+        if f.strike {
+            st = st.add_modifier(Modifier::CROSSED_OUT);
+        }
+        if f.link {
+            st = Style::default().fg(p.link).add_modifier(Modifier::UNDERLINED);
+        }
+        st
+    }
+}
+
+struct CellSpec {
+    ch: char,
+    style: Style,
+}
+
+/// Wrap a flat token list into rows of styled cells fitting `width`.
+fn wrap_tokens(tokens: &[Token], width: usize) -> Vec<Vec<CellSpec>> {
+    let width = width.max(1);
+    let mut rows: Vec<Vec<CellSpec>> = vec![Vec::new()];
+    let mut cur = 0usize;
+    let p = pal();
+    for tok in tokens {
+        let base = style_for_fmt(tok.f, p);
+        for c in tok.s.chars() {
+            if c == '\n' {
+                rows.push(Vec::new());
+                cur = 0;
+                continue;
+            }
+            let w = cell_w(c);
+            if cur + w > width && cur > 0 {
+                rows.push(Vec::new());
+                cur = 0;
+            }
+            rows.last_mut().unwrap().push(CellSpec { ch: c, style: base });
+            cur += w;
+        }
+    }
+    rows
+}
+
+fn style_for_fmt(f: Fmt, p: &Pal) -> Style {
+    let mut fg = if f.code { p.inline_code_fg } else { p.text };
+    let bg = if f.code { p.inline_code_bg } else { p.bg };
+    if f.bold {
+        fg = p.strong;
+    }
+    let mut st = Style::default().fg(fg).bg(bg);
+    if f.bold {
+        st = st.add_modifier(Modifier::BOLD);
+    }
+    if f.italic {
+        st = st.add_modifier(Modifier::ITALIC);
+    }
+    if f.strike {
+        st = st.add_modifier(Modifier::CROSSED_OUT);
+    }
+    if f.link {
+        st = Style::default().fg(p.link).add_modifier(Modifier::UNDERLINED);
+    }
+    st
+}
+
+fn cell_w(c: char) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    c.width().unwrap_or(1).max(0)
+}
+
+fn synthect_to_ratatui(s: syntect::highlighting::Style, fallback: Color) -> Color {
+    if s.foreground.a == 0 {
+        fallback
+    } else {
+        Color::Rgb(s.foreground.r, s.foreground.g, s.foreground.b)
+    }
+}
+
+fn fill_rect(buf: &mut Buffer, area: ratatui::layout::Rect, bg: Color) {
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_style(Style::default().bg(bg));
+        }
+    }
+}
+
+fn split_tokens(s: &str) -> Vec<String> {
+    // split keeping trailing whitespace attached to the preceding chunk
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    for c in s.chars() {
+        if c == ' ' || c == '\t' {
+            buf.push(c);
+        } else {
+            if !buf.is_empty() && buf.chars().last().map_or(false, |c| c == ' ' || c == '\t') {
+                // we had whitespace then a non-ws: flush whitespace-only? keep attached
+            }
+            buf.push(c);
+        }
+    }
+    // simpler: just keep whole words+trailing space as tokens
+    out.clear();
+    let mut cur = String::new();
+    for c in s.chars() {
+        cur.push(c);
+        if c == ' ' {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// silence unused
+#[allow(unused)]
+fn _silence() {
+    let _ = markdown::render_lines;
+    let _ = (Line::default(), Span::raw(""));
+}

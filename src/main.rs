@@ -3,6 +3,7 @@
 mod app;
 mod buffer;
 mod markdown;
+mod pretty;
 mod ui;
 
 use app::{App, Focus};

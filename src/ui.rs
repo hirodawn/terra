@@ -4,7 +4,7 @@ use crate::app::{rows_for_line, segments, App, Focus};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -200,39 +200,15 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = border.inner(area);
     f.render_widget(border, area);
 
+    // CSS-grade renderer paints directly into the buffer.
     app.ensure_preview();
-    // wrap preview to inner width
-    let pw = inner.width as usize;
-    if app.cache_width != pw {
-        app.wrapped_preview = wrap_preview(&app.cached_lines, pw.saturating_sub(1).max(1));
-        app.cache_width = pw;
-    }
+    let src = app.buf.text();
+    let _ = src;
+    crate::pretty::render(f, inner, &app.buf.text(), app.preview_scroll);
 
-    let focused_now = focused;
-    let scroll = app.preview_scroll;
-    let lines: Vec<Line> = app
-        .wrapped_preview
-        .iter()
-        .skip(scroll)
-        .take(inner.height as usize)
-        .cloned()
-        .collect();
-    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((0, 0));
-    f.render_widget(p, inner);
-
-    // scrollbar indicator
-    if app.wrapped_preview.len() > inner.height as usize {
-        let ratio = scroll as f64 / app.wrapped_preview.len().max(1) as f64;
-        let thumb_y = inner.y + ((inner.height as f64 * ratio) as u16).min(inner.height.saturating_sub(1));
-        for yy in inner.y..inner.y + inner.height {
-            let c = if yy == thumb_y { accent } else { Color::Rgb(40, 44, 56) };
-            f.buffer_mut()[(inner.x + inner.width - 1, yy)]
-                .set_style(Style::default().fg(c).bg(Color::Reset));
-            f.buffer_mut()[(inner.x + inner.width - 1, yy)].set_char('▕');
-        }
-    }
-    let _ = focused_now;
+    let _ = focused;
 }
+
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     if app.search_open {
@@ -393,47 +369,3 @@ fn char_cell(c: char) -> usize {
     c.width().unwrap_or(0).max(0)
 }
 
-/// Wrap styled logical lines into display lines fitting `width` cells.
-fn wrap_preview(lines: &[Line<'static>], width: usize) -> Vec<Line<'static>> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for line in lines {
-        // compute cell width
-        let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-        let _ = total;
-        let mut current = Line::default();
-        let mut current_w = 0usize;
-        for span in &line.spans {
-            // we approximate width by char count; acceptable for preview
-            let mut buf = String::new();
-            for c in span.content.chars() {
-                let cw = char_cell(c);
-                if current_w + cw > width && (!buf.is_empty() || current_w > 0) {
-                    if !buf.is_empty() {
-                        current.spans.push(Span::styled(std::mem::take(&mut buf), span.style));
-                    }
-                    out.push(std::mem::take(&mut current));
-                    current_w = 0;
-                }
-                if c == '\n' {
-                    if !buf.is_empty() {
-                        current.spans.push(Span::styled(std::mem::take(&mut buf), span.style));
-                    }
-                    out.push(std::mem::take(&mut current));
-                    current_w = 0;
-                    continue;
-                }
-                buf.push(c);
-                current_w += cw;
-            }
-            if !buf.is_empty() {
-                current.spans.push(Span::styled(std::mem::take(&mut buf), span.style));
-            }
-        }
-        out.push(current);
-    }
-    if out.is_empty() {
-        out.push(Line::raw(""));
-    }
-    out
-}
