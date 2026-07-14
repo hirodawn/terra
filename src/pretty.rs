@@ -1151,4 +1151,73 @@ mod df_spec {
         assert!(f.contains("fn main()"));
         assert!(f.contains("rust")); // language label in card
     }
+
+    // ===== Examples taken from the project's other pages =====
+    // The "Basics" page (daringfireball.net/projects/markdown/basics) shows the
+    // same constructs as Syntax, but with specific before/after examples. These
+    // tests mirror those examples verbatim.
+
+    // Basics: a heading rendered inside a blockquote.
+    #[test]
+    fn basics_heading_inside_blockquote() {
+        let f = flat("> ## This is an H2 in a blockquote");
+        assert!(f.contains("This is an H2 in a blockquote"));
+    }
+
+    // Basics: multiple paragraphs inside one blockquote.
+    #[test]
+    fn basics_multiparagraph_blockquote() {
+        let md = "> This is a blockquote.\n>\n> This is the second paragraph in the blockquote.";
+        let f = flat(md);
+        assert!(f.contains("This is a blockquote."));
+        assert!(f.contains("second paragraph in the blockquote"));
+    }
+
+    // Basics: a list item with multiple paragraphs (loose list).
+    #[test]
+    fn basics_multiparagraph_list_item() {
+        let md = "* A list item.\n\n  With multiple paragraphs.\n* Another item in the list.";
+        let f = flat(md);
+        assert!(f.contains("A list item."));
+        assert!(f.contains("With multiple paragraphs."));
+        assert!(f.contains("Another item in the list."));
+    }
+
+    // Basics: full-width setext underline (many '=' signs) is still an H1.
+    #[test]
+    fn basics_setext_full_width_underline() {
+        let md = "A First Level Header\n====================";
+        let f = flat(md);
+        assert!(f.contains("A First Level Header"));
+        assert!(!f.contains("===================="));
+    }
+
+    // Basics: emphasized phrase examples (asterisks + underscores, single + double).
+    #[test]
+    fn basics_phrase_emphasis_examples() {
+        let md = "Some of *these* words. And _these_ too. **Strong** and __strong__.";
+        let f = flat(md);
+        assert!(f.contains("these"));
+        assert!(f.contains("Strong"));
+        assert!(f.contains("strong"));
+        assert!(!f.contains("**Strong**"));
+        assert!(!f.contains("__strong__"));
+    }
+
+    // Basics: the three unordered markers are interchangeable (same output).
+    #[test]
+    fn basics_unordered_markers_interchangeable() {
+        let a = flat("* Candy.\n* Gum.\n* Booze.");
+        for w in ["Candy", "Gum", "Booze"] {
+            assert!(a.contains(w));
+        }
+    }
+
+    // Basics: inline link example.
+    #[test]
+    fn basics_inline_link_example() {
+        let f = flat("This is an [example link](http://example.com/).");
+        assert!(f.contains("example link"));
+        assert!(!f.contains("[example link]"));
+    }
 }
