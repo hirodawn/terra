@@ -17,7 +17,7 @@ rhythm that makes you forget you're in a terminal.
 
 ---
 
-<img src="screenshots/main.png.svg" alt="terra — split editor with live preview" width="100%">
+<img src="screenshots/main.svg" alt="terra — split editor with live preview" width="100%">
 
 ---
 
