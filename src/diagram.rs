@@ -533,7 +533,6 @@ fn render_class(buf: &mut Buffer, area: ratatui::layout::Rect, src: &str) -> usi
         let row = (i as i32) / per_row;
         let cx = x0 + col * col_w;
         let cy = y0 + row * (10); // rough row stride; refined below
-        let _ = y;
         // width from longest member/name
         let inner = cls.members.iter().map(|m| m.chars().count()).chain(std::iter::once(cls.name.chars().count())).max().unwrap_or(3).max(3) as i32;
         let w = inner + 4;
