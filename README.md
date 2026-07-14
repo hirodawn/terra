@@ -1,57 +1,124 @@
-# terra
+<div align="center">
 
-*A blazing-fast TUI Markdown editor with a live, side-by-side preview.*
+# ⚡ terra
 
-`terra` is a terminal editor built with [ratatui](https://crates.io/crates/ratatui),
-[pulldown-cmark](https://crates.io/crates/pulldown-cmark) and
-[syntect](https://crates.io/crates/syntect). Edit Markdown on the left, see it
-beautifully rendered — headings, lists, tables, code with syntax highlighting,
-blockquotes, task lists, links, images, footnotes — on the right, instantly.
+**A Markdown editor that doesn't need a browser.**
 
-## Features
+Edit on the left. Watch it render — beautifully — on the right.  
+Syntax-highlighted code, boxed tables, live diagrams, and a typographic
+rhythm that makes you forget you're in a terminal.
 
-- Split-pane **live preview** (edit ⟷ rendered), with proportional scroll-sync
-- Word-wrap editor with line-number gutter
-- **Search** with live match highlighting (`/`, `n`, `N`), Esc clears
-- **Outline jump** (`Ctrl+O`) — list of headings, `j/k` + `Enter`
-- Go-to-line (`:42`), command mode (`:w :q :x`)
-- Smart list continuation (Enter in a list continues it; empty item outdents)
-- Auto-indent, duplicate line (`Ctrl+D`), delete line (`Ctrl+K`)
-- **Undo/redo** (`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+R`), word-granularity coalescing
-- Mouse support: scroll, and click-to-position the cursor
-- 3 UI themes + 6 code-highlight themes, wrap toggle, help panel
-- Headless `--dump` mode for scripting / testing without a TTY
+[![Rust](https://img.shields.io/badge/Rust-1.97-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen.svg)]()
+[![Startup](https://img.shields.io/badge/startup-~10ms-yellow.svg)]()
+
+</div>
+
+---
+
+<img src="screenshots/main.png.svg" alt="terra — split editor with live preview" width="100%">
+
+---
+
+## Why terra
+
+Most Markdown tools either live in the browser (heavy, disconnected from
+your terminal workflow) or spit out a wall of monospaced text (functional,
+but ugly). **terra is neither.**
+
+It's a terminal-native editor with a **CSS-grade preview engine** that
+paints blocks directly into your terminal buffer — rounded code cards,
+boxed tables, colored blockquote bars, hanging-indent lists, heading
+underline rules, and **smooth Unicode-braille diagrams**.
+
+### ⚡ Instant
+
+Opens in ~10 ms. No daemon, no server, no Electron. Just a 2.9 MB binary
+that reads your file and lets you write.
+
+### 🎨 Beautiful
+
+The preview isn't styled text — it's **painted**. Every block is positioned
+with full-width backgrounds, rounded corners, and a curated RGB palette:
+
+```
+╭ rust ───────────────────────────────╮
+│ fn main() {                         │
+│     println!("hello, world");       │
+│ }                                   │
+╰─────────────────────────────────────╯
+```
+
+### 🖼️ Diagrams, natively
+
+Mermaid flowcharts, sequence diagrams, state machines, and class diagrams
+render **inside the terminal** — no SVG, no external tools, no browser
+required. Circles and curves are drawn with Unicode braille sub-cell
+dots for smooth outlines:
+
+<img src="screenshots/diagrams.svg" alt="Mermaid diagrams rendered in the terminal" width="80%">
+
+Sequence diagrams get their own layout — participant headers, dashed
+lifelines, labeled message arrows:
+
+<img src="screenshots/sequence.svg" alt="Sequence diagram in terminal" width="70%">
+
+### ⌨️ Stays out of your way
+
+| What | How |
+|------|-----|
+| **Search** | `/` with live highlight · `n` / `N` to jump |
+| **Outline** | `Ctrl+O` — jump to any heading |
+| **Go to line** | `:42` |
+| **Undo / Redo** | `Ctrl+Z` / `Ctrl+R` |
+| **Smart lists** | Enter continues the list; empty item outdents |
+| **Mouse** | Click to position cursor · scroll to navigate |
+| **Live sync** | Preview follows your cursor as you edit |
 
 ## Install
 
 ```bash
-cargo install --path .        # or: cargo build --release && cp target/release/terra ~/.local/bin
+cargo install --path .
 ```
 
 ## Usage
 
 ```bash
-terra notes.md                # edit + preview
-terra notes.md --read         # start in preview focus
-terra --dump notes.md         # render one frame to stdout (no TTY)
-terra --dump --search bold --width 80 --height 24 notes.md
+terra README.md            # edit + preview
+terra notes.md             # same thing
+terra --dump README.md     # render one frame (no TTY — pipe it!)
 ```
 
 ## Keybindings
 
-| Key | Action |
-|---|---|
-| `Ctrl+S` | save · `Ctrl+Q`/`Ctrl+C` quit |
-| `Tab` | switch editor ⟷ preview |
-| `Ctrl+O` | outline jump · `/` search · `n`/`N` next/prev |
-| `:` | command mode (`:w` `:q` `:x` `:42`) |
-| `Ctrl+D`/`Ctrl+K` | duplicate / delete line |
-| `Ctrl+Z`/`Ctrl+R` | undo / redo · `Ctrl+W` wrap · `Ctrl+T` theme |
-| `Ctrl+Y` | toggle preview scroll-sync · `Ctrl+H`/`?` help |
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `Ctrl+S` | Save | `Tab` | Switch pane |
+| `Ctrl+Q` | Quit | `Ctrl+O` | Outline jump |
+| `Ctrl+Z` | Undo | `Ctrl+R` | Redo |
+| `Ctrl+D` | Duplicate line | `Ctrl+K` | Delete line |
+| `/` `n` `N` | Search | `:` | Command mode (`:w` `:q` `:42`) |
+| `Ctrl+W` | Toggle wrap | `Ctrl+T` | Cycle theme |
+| `Ctrl+Y` | Toggle preview sync | `?` | Help |
 
-## Status
+## Markdown support
 
-22 unit tests covering the editing core (insert/delete/backspace, word motion,
-multiline, smart lists, undo/redo). ~10 ms startup, ~2.9 MB binary.
+Everything from the original [Daring Fireball spec](https://daringfireball.net/projects/markdown/)
+— atx and setext headers, inline/reference/automatic links, emphasis
+(`*` `_` `**` `__`), inline code (single and multi-backtick), images,
+blockquotes (nested), ordered/unordered/nested lists, indented and fenced
+code blocks, horizontal rules, backslash escapes — verified by a
+[69-test compliance suite](src/pretty.rs).
 
-License: MIT.
+Plus: tables, task lists, footnotes, and four Mermaid diagram types.
+
+## Built with
+
+- [ratatui](https://crates.io/crates/ratui) — terminal UI framework
+- [pulldown-cmark](https://crates.io/crates/pulldown-cmark) — Markdown parser
+- [syntect](https://crates.io/crates/syntect) — syntax highlighting
+
+## License
+
+MIT — see [LICENSE](LICENSE).

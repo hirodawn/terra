@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="732" height="270" viewBox="0 0 732 270">
+<rect width="732" height="270" fill="#0d1117" rx="6"/>
+<g font-family="Menlo,Monaco,Courier New,monospace" font-size="12" text-rendering="geometricPrecision">
+<text x="23" y="24" fill="#c9d1d9" font-weight="normal">✦</text>
+<text x="37" y="24" fill="#c9d1d9" font-weight="normal">seq.md</text>
+<text x="100" y="24" fill="#c9d1d9" font-weight="normal">dark</text>
+<text x="135" y="24" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="149" y="24" fill="#c9d1d9" font-weight="normal">base16-ocean.dark</text>
+<text x="275" y="24" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="289" y="24" fill="#c9d1d9" font-weight="normal">wrap:on</text>
+<text x="345" y="24" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="359" y="24" fill="#c9d1d9" font-weight="normal">EDIT</text>
+<text x="16" y="38" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="38" fill="#c9d1d9" font-weight="normal">editor</text>
+<text x="366" y="38" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="380" y="38" fill="#c9d1d9" font-weight="normal">preview</text>
+<text x="16" y="52" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="52" fill="#c9d1d9" font-weight="normal">1</text>
+<rect x="44" y="41" width="7" height="14" fill="#202430"/><text x="44" y="52" fill="#c9d1d9" font-weight="normal">#</text>
+<rect x="58" y="41" width="56" height="14" fill="#202430"/><text x="58" y="52" fill="#c9d1d9" font-weight="normal">Sequence</text>
+<text x="366" y="52" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="16" y="66" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="66" fill="#c9d1d9" font-weight="normal">2</text>
+<text x="366" y="66" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="387" y="66" fill="#ffa657" font-weight="normal">▍</text>
+<text x="401" y="66" fill="#ffa657" font-weight="normal">Sequence</text>
+<text x="16" y="80" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="80" fill="#c9d1d9" font-weight="normal">3</text>
+<text x="44" y="80" fill="#c9d1d9" font-weight="normal">```mermaid</text>
+<text x="366" y="80" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="387" y="80" fill="#ffa657" font-weight="normal">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
+<text x="16" y="94" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="94" fill="#c9d1d9" font-weight="normal">4</text>
+<text x="44" y="94" fill="#c9d1d9" font-weight="normal">sequenceDiagram</text>
+<text x="366" y="94" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="16" y="108" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="108" fill="#c9d1d9" font-weight="normal">5</text>
+<text x="72" y="108" fill="#c9d1d9" font-weight="normal">participant</text>
+<text x="156" y="108" fill="#c9d1d9" font-weight="normal">Alice</text>
+<text x="366" y="108" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="16" y="122" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="122" fill="#c9d1d9" font-weight="normal">6</text>
+<text x="72" y="122" fill="#c9d1d9" font-weight="normal">participant</text>
+<text x="156" y="122" fill="#c9d1d9" font-weight="normal">Bob</text>
+<text x="366" y="122" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="387" y="122" fill="#30363d" font-weight="normal">╭</text>
+<text x="401" y="122" fill="#8b949e" font-weight="normal">mermaid</text>
+<text x="457" y="122" fill="#8b949e" font-weight="normal">diagram</text>
+<text x="513" y="122" fill="#30363d" font-weight="normal">──────────────────────────╮</text>
+<text x="16" y="136" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="136" fill="#c9d1d9" font-weight="normal">7</text>
+<text x="72" y="136" fill="#c9d1d9" font-weight="normal">Alice-&gt;&gt;Bob:</text>
+<text x="163" y="136" fill="#c9d1d9" font-weight="normal">Hello</text>
+<text x="366" y="136" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="16" y="150" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="150" fill="#c9d1d9" font-weight="normal">8</text>
+<text x="72" y="150" fill="#c9d1d9" font-weight="normal">Bob--&gt;&gt;Alice:</text>
+<text x="170" y="150" fill="#c9d1d9" font-weight="normal">Hi</text>
+<text x="366" y="150" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="464" y="139" width="63" height="14" fill="#1c222f"/><text x="464" y="150" fill="#79c0ff" font-weight="normal">╭───────╮</text>
+<rect x="569" y="139" width="49" height="14" fill="#1c222f"/><text x="569" y="150" fill="#79c0ff" font-weight="normal">╭─────╮</text>
+<text x="16" y="164" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="30" y="164" fill="#c9d1d9" font-weight="normal">9</text>
+<text x="44" y="164" fill="#c9d1d9" font-weight="normal">```</text>
+<text x="366" y="164" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="464" y="153" width="7" height="14" fill="#1c222f"/><text x="464" y="164" fill="#79c0ff" font-weight="normal">│</text>
+<rect x="478" y="153" width="35" height="14" fill="#1c222f"/><text x="478" y="164" fill="#dce1eb" font-weight="normal">Alice</text>
+<rect x="520" y="153" width="7" height="14" fill="#1c222f"/><text x="520" y="164" fill="#79c0ff" font-weight="normal">│</text>
+<rect x="569" y="153" width="7" height="14" fill="#1c222f"/><text x="569" y="164" fill="#79c0ff" font-weight="normal">│</text>
+<rect x="583" y="153" width="21" height="14" fill="#1c222f"/><text x="583" y="164" fill="#dce1eb" font-weight="normal">Bob</text>
+<rect x="611" y="153" width="7" height="14" fill="#1c222f"/><text x="611" y="164" fill="#79c0ff" font-weight="normal">│</text>
+<text x="16" y="178" fill="#c9d1d9" font-weight="normal">│10</text>
+<text x="366" y="178" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="464" y="167" width="63" height="14" fill="#1c222f"/><text x="464" y="178" fill="#79c0ff" font-weight="normal">╰───────╯</text>
+<rect x="569" y="167" width="49" height="14" fill="#1c222f"/><text x="569" y="178" fill="#79c0ff" font-weight="normal">╰─────╯</text>
+<text x="16" y="192" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="366" y="192" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="492" y="181" width="7" height="14" fill="#1c222f"/><text x="492" y="192" fill="#5a6374" font-weight="normal">┊</text>
+<rect x="527" y="181" width="35" height="14" fill="#1c222f"/><text x="527" y="192" fill="#c8d2e1" font-weight="normal">Hello</text>
+<rect x="590" y="181" width="7" height="14" fill="#1c222f"/><text x="590" y="192" fill="#5a6374" font-weight="normal">┊</text>
+<text x="16" y="206" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="366" y="206" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="492" y="195" width="7" height="14" fill="#1c222f"/><text x="492" y="206" fill="#5a6374" font-weight="normal">┊</text>
+<rect x="499" y="195" width="91" height="14" fill="#1c222f"/><text x="499" y="206" fill="#8b949e" font-weight="normal">─────────────</text>
+<rect x="590" y="195" width="7" height="14" fill="#1c222f"/><text x="590" y="206" fill="#5a6374" font-weight="normal">┊</text>
+<text x="16" y="220" fill="#c9d1d9" font-weight="normal">│</text>
+<text x="366" y="220" fill="#c9d1d9" font-weight="normal">│</text>
+<rect x="492" y="209" width="7" height="14" fill="#1c222f"/><text x="492" y="220" fill="#5a6374" font-weight="normal">┊</text>
+<rect x="590" y="209" width="7" height="14" fill="#1c222f"/><text x="590" y="220" fill="#5a6374" font-weight="normal">┊</text>
+<text x="23" y="234" fill="#c9d1d9" font-weight="normal">INSERT</text>
+<text x="79" y="234" fill="#c9d1d9" font-weight="normal">1:1</text>
+<text x="114" y="234" fill="#c9d1d9" font-weight="normal">seq.md</text>
+<text x="163" y="234" fill="#c9d1d9" font-weight="normal">—</text>
+<text x="177" y="234" fill="#c9d1d9" font-weight="normal">terra</text>
+<text x="233" y="234" fill="#c9d1d9" font-weight="normal">13</text>
+<text x="254" y="234" fill="#c9d1d9" font-weight="normal">words</text>
+<text x="296" y="234" fill="#c9d1d9" font-weight="normal">·</text>
+<text x="310" y="234" fill="#c9d1d9" font-weight="normal">10L</text>
+<text x="338" y="234" fill="#c9d1d9" font-weight="normal">·</text>
+<text x="352" y="234" fill="#c9d1d9" font-weight="normal">rev:0</text>
+<rect x="492" y="223" width="7" height="14" fill="#1c222f"/><text x="492" y="234" fill="#5a6374" font-weight="normal">┊</text>
+<rect x="534" y="223" width="14" height="14" fill="#1c222f"/><text x="534" y="234" fill="#c8d2e1" font-weight="normal">Hi</text>
+<rect x="590" y="223" width="7" height="14" fill="#1c222f"/><text x="590" y="234" fill="#5a6374" font-weight="normal">┊</text>
+</g></svg>
