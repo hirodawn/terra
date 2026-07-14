@@ -33,6 +33,7 @@ struct DNode {
     id: String,
     label: String,
     shape: Shape,
+    color: Option<String>,
     // layout outputs
     x: i32,
     y: i32,
@@ -40,10 +41,18 @@ struct DNode {
     h: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Dir {
     TD,
     LR,
+    RL,
+    BT,
+}
+
+impl Dir {
+    fn horizontal(self) -> bool {
+        matches!(self, Dir::LR | Dir::RL)
+    }
 }
 
 #[derive(Clone)]
@@ -54,6 +63,7 @@ struct DEdge {
     dashed: bool,
     dotted: bool,
     thick: bool,
+    color: Option<String>,
 }
 
 struct Diagram {
@@ -72,6 +82,7 @@ impl Diagram {
             id: id.to_string(),
             label: id.to_string(),
             shape: Shape::Rect,
+            color: None,
             x: 0,
             y: 0,
             w: 0,
@@ -82,6 +93,46 @@ impl Diagram {
 }
 
 /// Paint a diagram block. Returns the number of rows consumed.
+/// Parse a pinstar/GFM-style color spec into a ratatui Color.
+/// Supports `#rrggbb` and named/numbered presets (red/orange/yellow/green/cyan/purple).
+fn parse_color(s: Option<&str>) -> Option<Color> {
+    let s = s?.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        if hex.len() == 6 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            return Some(Color::Rgb(r, g, b));
+        }
+        return None;
+    }
+    Some(match s {
+        "1" | "red" => Color::Rgb(255, 82, 82),
+        "2" | "orange" => Color::Rgb(255, 152, 0),
+        "3" | "yellow" => Color::Rgb(255, 235, 59),
+        "4" | "green" => Color::Rgb(76, 175, 80),
+        "5" | "cyan" => Color::Rgb(0, 188, 212),
+        "6" | "purple" => Color::Rgb(156, 39, 176),
+        "7" | "blue" => Color::Rgb(66, 165, 245),
+        "8" | "magenta" | "pink" => Color::Rgb(236, 64, 122),
+        _ => return None,
+    })
+}
+
+/// Extract a fill or stroke color from a `style ID fill:#x,stroke:#y` attribute list.
+fn extract_style_color(attrs: &str) -> Option<String> {
+    for part in attrs.split(',') {
+        let p = part.trim();
+        if let Some(v) = p.strip_prefix("stroke:").or_else(|| p.strip_prefix("fill:")).or_else(|| p.strip_prefix("color:")) {
+            let v = v.trim();
+            if parse_color(Some(v)).is_some() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn render_block(buf: &mut Buffer, area: ratatui::layout::Rect, lang: &str, src: &str) -> usize {
     if lang == "plantuml" || lang == "puml" {
         return match parse_plantuml(src) {
@@ -140,12 +191,13 @@ fn parse_mermaid(src: &str) -> Option<Diagram> {
     let mut nodes: Vec<DNode> = Vec::new();
     let mut edges: Vec<DEdge> = Vec::new();
     let mut started = false;
+    let mut class_colors: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     let find_or = |nodes: &mut Vec<DNode>, id: &str| -> usize {
         if let Some(i) = nodes.iter().position(|n| n.id == id) {
             return i;
         }
-        nodes.push(DNode { id: id.to_string(), label: id.to_string(), shape: Shape::Rect, x: 0, y: 0, w: 0, h: 0 });
+        nodes.push(DNode { id: id.to_string(), label: id.to_string(), shape: Shape::Rect, color: None, x: 0, y: 0, w: 0, h: 0 });
         nodes.len() - 1
     };
 
@@ -160,7 +212,9 @@ fn parse_mermaid(src: &str) -> Option<Diagram> {
             if let Some(rest) = lower.strip_prefix("flowchart").or_else(|| lower.strip_prefix("graph")) {
                 let d = rest.trim();
                 dir = match d {
-                    "lr" | "rl" => Dir::LR,
+                    "lr" => Dir::LR,
+                    "rl" => Dir::RL,
+                    "bt" => Dir::BT,
                     _ => Dir::TD,
                 };
                 started = true;
@@ -169,14 +223,35 @@ fn parse_mermaid(src: &str) -> Option<Diagram> {
             // no header; treat the whole thing as flowchart TD
             started = true;
         }
-        // skip lines we don't handle
-        if lower.starts_with("classdef")
-            || lower.starts_with("style")
-            || lower.starts_with("class ")
-            || lower.starts_with("linkstyle")
-            || lower.starts_with("subgraph")
-            || lower.starts_with("end")
-        {
+        // color directives: classDef / class / style
+        if let Some(_rest) = lower.strip_prefix("classdef") {
+            // classDef NAME fill:#x,stroke:#y;
+            let rest = line["classDef".len()..].trim();
+            let (name, attrs) = match rest.split_once(' ') { Some((n, a)) => (n.trim(), a), None => (rest, "") };
+            if let Some(c) = extract_style_color(attrs) { class_colors.insert(name.to_string(), c); }
+            continue;
+        }
+        if let Some(_rest) = lower.strip_prefix("class ") {
+            // class ID NAME  or  class ID fill:#x
+            let rest = line["class ".len()..].trim();
+            let (ids, cls) = match rest.split_once(' ') { Some((a, b)) => (a.trim(), b.trim()), None => (rest, "") };
+            if let Some(c) = extract_style_color(cls) {
+                for nid in ids.split(',') { if let Some(i) = nodes.iter().position(|n| n.id == nid.trim()) { nodes[i].color = Some(c.clone()); } }
+            } else if let Some(c) = class_colors.get(cls) {
+                for nid in ids.split(',') { if let Some(i) = nodes.iter().position(|n| n.id == nid.trim()) { nodes[i].color = Some(c.clone()); } }
+            }
+            continue;
+        }
+        if let Some(_rest) = lower.strip_prefix("style") {
+            // style ID fill:#x,stroke:#y
+            let rest = line["style".len()..].trim();
+            let (id, attrs) = match rest.split_once(' ') { Some((a, b)) => (a.trim(), b), None => (rest, "") };
+            if let Some(c) = extract_style_color(attrs) {
+                if let Some(i) = nodes.iter().position(|n| n.id == id) { nodes[i].color = Some(c); }
+            }
+            continue;
+        }
+        if lower.starts_with("linkstyle") || lower.starts_with("subgraph") || lower.starts_with("end") {
             continue;
         }
         // split statements on ';'
@@ -239,7 +314,7 @@ fn parse_chain(
             Some(x) => x,
             None => break,
         };
-        edges.push(DEdge { from: cur, to: target, label, dashed: op.dashed, dotted: op.dotted, thick: op.thick });
+        edges.push(DEdge { from: cur, to: target, label, dashed: op.dashed, dotted: op.dotted, thick: op.thick, color: None });
         cur = target;
     }
 }
@@ -377,7 +452,8 @@ fn parse_state(src: &str) -> Option<Diagram> {
             id: id.to_string(),
             label: label.unwrap_or_else(|| id.to_string()),
             shape,
-            x: 0, y: 0, w: 0, h: 0,
+            color: None,
+        x: 0, y: 0, w: 0, h: 0,
         });
         nodes.len() - 1
     };
@@ -408,7 +484,7 @@ fn parse_state(src: &str) -> Option<Diagram> {
             let f = find_or(&mut nodes, &fid, flabel, fshape);
             let t = find_or(&mut nodes, &tid, tlabel, tshape);
             let dashed = op.contains('.') || op.contains('-') && op.matches('-').count() > 2;
-            edges.push(DEdge { from: f, to: t, label, dashed, dotted: false, thick: false });
+            edges.push(DEdge { from: f, to: t, label, dashed, dotted: false, thick: false, color: None });
         }
     }
     if nodes.is_empty() { return None; }
@@ -786,6 +862,7 @@ fn parse_plantuml(src: &str) -> Option<Diagram> {
             id: id.to_string(),
             label: label.unwrap_or_else(|| id.to_string()),
             shape: Shape::Round,
+            color: None,
             x: 0,
             y: 0,
             w: 0,
@@ -815,7 +892,7 @@ fn parse_plantuml(src: &str) -> Option<Diagram> {
             {
                 let f = find_or(&mut nodes, lhs, None);
                 let t = find_or(&mut nodes, rhs, None);
-                edges.push(DEdge { from: f, to: t, label: msg.map(|s| s.to_string()), dashed: false, dotted: false, thick: false });
+                edges.push(DEdge { from: f, to: t, label: msg.map(|s| s.to_string()), dashed: false, dotted: false, thick: false, color: None });
                 prev = Some(t);
                 continue;
             }
@@ -827,7 +904,7 @@ fn parse_plantuml(src: &str) -> Option<Diagram> {
             auto += 1;
             let idx = find_or(&mut nodes, &id, Some(label));
             if let Some(p) = prev {
-                edges.push(DEdge { from: p, to: idx, label: None, dashed: false, dotted: false, thick: false });
+                edges.push(DEdge { from: p, to: idx, label: None, dashed: false, dotted: false, thick: false, color: None });
             }
             prev = Some(idx);
             continue;
@@ -836,7 +913,7 @@ fn parse_plantuml(src: &str) -> Option<Diagram> {
             let id = line.to_string();
             let idx = find_or(&mut nodes, &id, Some(line.to_string()));
             if let Some(p) = prev {
-                edges.push(DEdge { from: p, to: idx, label: None, dashed: false, dotted: false, thick: false });
+                edges.push(DEdge { from: p, to: idx, label: None, dashed: false, dotted: false, thick: false, color: None });
             }
             prev = Some(idx);
             continue;
@@ -908,7 +985,7 @@ fn layout(d: &mut Diagram, area_w: i32) {
     // figure out max columns per layer to size the grid
     let max_cols = buckets.iter().map(|b| b.len()).max().unwrap_or(1).max(1);
     match d.dir {
-        Dir::TD => {
+        Dir::TD | Dir::BT => {
             let total_w = col_w * max_cols as i32;
             let x_off = ((area_w - total_w) / 2).max(0);
             for (li, b) in buckets.iter().enumerate() {
@@ -918,7 +995,7 @@ fn layout(d: &mut Diagram, area_w: i32) {
                 }
             }
         }
-        Dir::LR => {
+        Dir::LR | Dir::RL => {
             for (li, b) in buckets.iter().enumerate() {
                 for (ci, &i) in b.iter().enumerate() {
                     d.nodes[i].x = (li as i32) * col_w;
@@ -965,87 +1042,64 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
     for e in &d.edges {
         let a = &d.nodes[e.from];
         let b = &d.nodes[e.to];
-        let style = Style::default().fg(if e.thick { accent } else { edge_col });
+        // edge color (pinstar: per-edge color overrides default)
+        let edge_base = parse_color(e.color.as_deref()).unwrap_or(edge_col);
+        let style = Style::default().fg(if e.thick { accent } else { edge_base });
         let dash = if e.dotted { Some('.') } else if e.dashed { Some('-') } else { None };
         // centers of connecting sides
         let (sx, sy, tx, ty, arr) = match d.dir {
-            Dir::TD => {
-                let sx = a.x + a.w / 2;
-                let sy = a.y + a.h; // bottom
-                let tx = b.x + b.w / 2;
-                let ty = b.y; // top
-                (sx, sy, tx, ty, '▼')
-            }
-            Dir::LR => {
-                let sx = a.x + a.w; // right
-                let sy = a.y + a.h / 2;
-                let tx = b.x; // left
-                let ty = b.y + b.h / 2;
-                (sx, sy, tx, ty, '▶')
-            }
+            Dir::TD => (a.x + a.w / 2, a.y + a.h, b.x + b.w / 2, b.y, '▼'),
+            Dir::BT => (a.x + a.w / 2, a.y, b.x + b.w / 2, b.y + b.h, '▲'),
+            Dir::LR => (a.x + a.w, a.y + a.h / 2, b.x, b.y + b.h / 2, '▶'),
+            Dir::RL => (a.x, a.y + a.h / 2, b.x + b.w, b.y + b.h / 2, '◀'),
         };
-        let mid = match d.dir {
-            Dir::TD => (sy + ty) / 2,
-            Dir::LR => (sx + tx) / 2,
-        };
+        let vert = !d.dir.horizontal();
+        let mid = if vert { (sy + ty) / 2 } else { (sx + tx) / 2 };
         let hch = dash.unwrap_or('─');
         let vch = dash.unwrap_or('│');
-        match d.dir {
-            Dir::TD => {
-                // down from sy+1..mid
-                for yy in (sy + 1)..=mid {
-                    put(buf, x0 + sx, y0 + yy, vch, style);
-                }
-                if sx != tx {
-                    // horizontal across at mid
-                    let (lo, hi) = if sx < tx { (sx, tx) } else { (tx, sx) };
-                    for xx in lo..=hi {
-                        put(buf, x0 + xx, y0 + mid, hch, style);
-                    }
-                    // corners
-                    put(buf, x0 + sx, y0 + mid, if sx < tx { '┐' } else { '┌' }, style);
-                    put(buf, x0 + tx, y0 + mid, if sx < tx { '└' } else { '┘' }, style);
-                    for yy in (mid + 1)..ty {
-                        put(buf, x0 + tx, y0 + yy, vch, style);
-                    }
-                } else {
-                    for yy in (mid + 1)..ty {
-                        put(buf, x0 + tx, y0 + yy, vch, style);
-                    }
-                }
-                put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
+        if vert {
+            // down/up from sy..mid
+            let (lo, hi) = if sy < ty { (sy + 1, mid) } else { (mid, sy - 1) };
+            for yy in lo..=hi { put(buf, x0 + sx, y0 + yy, vch, style); }
+            if sx != tx {
+                let (xlo, xhi) = if sx < tx { (sx, tx) } else { (tx, sx) };
+                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + mid, hch, style); }
+                put(buf, x0 + sx, y0 + mid, if sx < tx { '┐' } else { '┌' }, style);
+                put(buf, x0 + tx, y0 + mid, if sx < tx { '└' } else { '┘' }, style);
+                let (ylo, yhi) = if mid < ty { (mid + 1, ty - 1) } else { (ty + 1, mid - 1) };
+                for yy in ylo..=yhi { put(buf, x0 + tx, y0 + yy, vch, style); }
+            } else {
+                let (ylo, yhi) = if mid < ty { (mid + 1, ty - 1) } else { (ty + 1, mid - 1) };
+                for yy in ylo..=yhi { put(buf, x0 + tx, y0 + yy, vch, style); }
             }
-            Dir::LR => {
-                for xx in (sx + 1)..=mid {
-                    put(buf, x0 + xx, y0 + sy, hch, style);
-                }
-                if sy != ty {
-                    let (lo, hi) = if sy < ty { (sy, ty) } else { (ty, sy) };
-                    for yy in lo..=hi {
-                        put(buf, x0 + mid, y0 + yy, vch, style);
-                    }
-                    put(buf, x0 + mid, y0 + sy, if sy < ty { '┘' } else { '┐' }, style);
-                    put(buf, x0 + mid, y0 + ty, if sy < ty { '┌' } else { '┘' }, style);
-                    for xx in (mid + 1)..tx {
-                        put(buf, x0 + xx, y0 + ty, hch, style);
-                    }
-                } else {
-                    for xx in (mid + 1)..tx {
-                        put(buf, x0 + xx, y0 + ty, hch, style);
-                    }
-                }
-                put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
+            put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
+        } else {
+            let (lo, hi) = if sx < tx { (sx + 1, mid) } else { (mid, sx - 1) };
+            for xx in lo..=hi { put(buf, x0 + xx, y0 + sy, hch, style); }
+            if sy != ty {
+                let (ylo, yhi) = if sy < ty { (sy, ty) } else { (ty, sy) };
+                for yy in ylo..=yhi { put(buf, x0 + mid, y0 + yy, vch, style); }
+                put(buf, x0 + mid, y0 + sy, if sy < ty { '┘' } else { '┐' }, style);
+                put(buf, x0 + mid, y0 + ty, if sy < ty { '┌' } else { '┘' }, style);
+                let (xlo, xhi) = if mid < tx { (mid + 1, tx - 1) } else { (tx + 1, mid - 1) };
+                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + ty, hch, style); }
+            } else {
+                let (xlo, xhi) = if mid < tx { (mid + 1, tx - 1) } else { (tx + 1, mid - 1) };
+                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + ty, hch, style); }
             }
+            put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
         }
         // edge label
         if let Some(lab) = &e.label {
-            let lx = match d.dir {
-                Dir::TD => x0 + (sx + tx) / 2 - (lab.chars().count() as i32) / 2,
-                Dir::LR => x0 + mid + 1,
+            let lx = if vert {
+                x0 + (sx + tx) / 2 - (lab.chars().count() as i32) / 2
+            } else {
+                x0 + mid + 1
             };
-            let ly = match d.dir {
-                Dir::TD => y0 + mid - 1,
-                Dir::LR => y0 + (sy + ty) / 2,
+            let ly = if vert {
+                y0 + mid - 1
+            } else {
+                y0 + (sy + ty) / 2
             };
             for (k, c) in lab.chars().enumerate() {
                 put(buf, lx + k as i32, ly, c, Style::default().fg(label_col));
@@ -1073,7 +1127,9 @@ fn draw_node(
     let w = node.w;
     let inner = (w - 2).max(1);
     let style = Style::default().fg(fg).bg(bg);
-    let border = Style::default().fg(accent).bg(bg);
+    // pinstar-style: per-node color overrides the accent border.
+    let border_color = parse_color(node.color.as_deref()).unwrap_or(accent);
+    let border = Style::default().fg(border_color).bg(bg);
     let put = |buf: &mut Buffer, xx: i32, yy: i32, ch: char, s: Style| {
         if xx < 0 || yy < 0 || xx >= buf.area.width as i32 || yy >= buf.area.height as i32 {
             return;
@@ -1083,7 +1139,7 @@ fn draw_node(
         cell.set_style(s);
     };
     match node.shape {
-        Shape::Rect | Shape::Cylinder => {
+        Shape::Rect => {
             put(buf, x, y, '┌', border);
             put(buf, x + w - 1, y, '┐', border);
             put(buf, x, y + 2, '└', border);
@@ -1092,14 +1148,23 @@ fn draw_node(
                 put(buf, x + i, y, '─', border);
                 put(buf, x + i, y + 2, '─', border);
             }
-            // label row
             put(buf, x, y + 1, '│', border);
             put(buf, x + w - 1, y + 1, '│', border);
             write_label(buf, x + 1, y + 1, &node.label, inner, style);
-            if node.shape == Shape::Cylinder {
-                put(buf, x, y, '╭', border);
-                put(buf, x + w - 1, y, '╮', border);
+        }
+        Shape::Cylinder => {
+            // top ellipse caps + sides + bottom half ellipse
+            put(buf, x, y, '╭', border);
+            put(buf, x + w - 1, y, '╮', border);
+            put(buf, x, y + 2, '╰', border);
+            put(buf, x + w - 1, y + 2, '╯', border);
+            for i in 1..(w - 1) {
+                put(buf, x + i, y, '─', border);
+                put(buf, x + i, y + 2, '─', border);
             }
+            put(buf, x, y + 1, '│', border);
+            put(buf, x + w - 1, y + 1, '│', border);
+            write_label(buf, x + 1, y + 1, &node.label, inner, style);
         }
         Shape::Round | Shape::Stadium | Shape::Circle => {
             put(buf, x, y, '╭', border);
@@ -1115,7 +1180,6 @@ fn draw_node(
             write_label(buf, x + 1, y + 1, &node.label, inner, style);
         }
         Shape::Diamond => {
-            // ╱─────╲  / │label│ \ /─────╲  ... 3-row form
             let top = y;
             let mid = y + 1;
             let bot = y + 2;
@@ -1134,7 +1198,6 @@ fn draw_node(
             }
         }
     }
-    // bold the label a touch
     let _ = (fg, Style::default().add_modifier(Modifier::BOLD));
 }
 
@@ -1155,6 +1218,13 @@ fn write_label(buf: &mut Buffer, x: i32, y: i32, label: &str, inner: i32, style:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mermaid_node_color_from_style() {
+        let d = parse_mermaid("graph TD\nA[Start]\nstyle A fill:#4caf50").unwrap();
+        let a = d.nodes.iter().find(|n| n.id == "A").unwrap();
+        assert_eq!(a.color.as_deref(), Some("#4caf50"));
+    }
 
     #[test]
     fn mermaid_chain_parses_all_edges() {
