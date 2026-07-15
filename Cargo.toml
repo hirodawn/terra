@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "A blazing-fast TUI Markdown editor with live preview"
 
+[lib]
+name = "terra"
+path = "src/lib.rs"
+
 [[bin]]
 name = "terra"
 path = "src/main.rs"

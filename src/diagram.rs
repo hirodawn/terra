@@ -1127,7 +1127,8 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
         cell.set_style(s);
     };
 
-    // draw edges (so nodes overlap endpoints)
+    // draw edges (so nodes overlap endpoints) — collect arrowheads for later
+    let mut arrows: Vec<(i32, i32, char, Color)> = Vec::new();
     // grid disabled — adds noise in narrow preview panes
     for e in &d.edges {
         let a = &d.nodes[e.from];
@@ -1162,7 +1163,7 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
                 let (ylo, yhi) = if mid < ty { (mid + 1, ty - 1) } else { (ty + 1, mid - 1) };
                 for yy in ylo..=yhi { put(buf, x0 + tx, y0 + yy, vch, style); }
             }
-            put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
+            arrows.push((x0 + tx, y0 + ty, arr, accent));
         } else {
             let (lo, hi) = if sx < tx { (sx + 1, mid) } else { (mid, sx - 1) };
             for xx in lo..=hi { put(buf, x0 + xx, y0 + sy, hch, style); }
@@ -1177,7 +1178,7 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
                 let (xlo, xhi) = if mid < tx { (mid + 1, tx - 1) } else { (tx + 1, mid - 1) };
                 for xx in xlo..=xhi { put(buf, x0 + xx, y0 + ty, hch, style); }
             }
-            put(buf, x0 + tx, y0 + ty, arr, style.fg(accent));
+            arrows.push((x0 + tx, y0 + ty, arr, accent));
         }
         // edge label
         if let Some(lab) = &e.label {
@@ -1200,6 +1201,11 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
     // draw nodes
     for node in &d.nodes {
         draw_node(buf, x0 + node.x, y0 + node.y, node, node_fg, node_bg, accent, area);
+    }
+
+    // draw arrowheads AFTER nodes (so they're not overwritten by borders)
+    for (ax, ay, ach, acol) in &arrows {
+        put(buf, *ax, *ay, *ach, Style::default().fg(*acol));
     }
 
     height
