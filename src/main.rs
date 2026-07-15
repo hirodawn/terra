@@ -128,7 +128,9 @@ fn main() -> io::Result<()> {
 
 fn setup_terminal() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
+    // Mouse capture disabled by default — enables native terminal text selection
+    // in both editor and preview panes. Press F2 to toggle mouse mode.
     Ok(())
 }
 
