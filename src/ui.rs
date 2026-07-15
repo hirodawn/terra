@@ -43,8 +43,16 @@ fn draw_selection(f: &mut Frame, app: &App) {
     if let (Some((sx, sy)), Some((ex, ey))) = (app.sel_start, app.sel_end) {
         let (lo_x, hi_x) = if sx <= ex { (sx, ex) } else { (ex, sx) };
         let (lo_y, hi_y) = if sy <= ey { (sy, ey) } else { (ey, sy) };
+        // pane bounds
+        let (px_lo, px_hi) = if app.sel_pane == 0 {
+            (app.ei_x, app.ei_x + app.ei_w)
+        } else {
+            (app.pi_x, app.pi_x + app.pi_w)
+        };
         for y in lo_y..=hi_y {
-            for x in lo_x..=hi_x {
+            let row_lo = if y == lo_y { lo_x.max(px_lo) } else { px_lo };
+            let row_hi = if y == hi_y { hi_x.min(px_hi.saturating_sub(1)) } else { px_hi.saturating_sub(1) };
+            for x in row_lo..=row_hi {
                 if x < f.area().width && y < f.area().height {
                     let cell = &mut f.buffer_mut()[(x, y)];
                     let s = cell.style();

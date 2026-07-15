@@ -937,9 +937,9 @@ fn layout(d: &mut Diagram, area_w: i32) {
     if n == 0 {
         return;
     }
-    // size each node
+    // size each node — use DISPLAY width (CJK = 2 cells)
     for node in d.nodes.iter_mut() {
-        let label_w = node.label.chars().count() as i32;
+        let label_w = unicode_width::UnicodeWidthStr::width(node.label.as_str()) as i32;
         node.w = (label_w + 4).max(5);
         node.h = match node.shape {
             Shape::Diamond => 3,
@@ -952,25 +952,27 @@ fn layout(d: &mut Diagram, area_w: i32) {
         indeg[e.to] += 1;
     }
     let mut layer = vec![0i32; n];
-    // Kahn-ish: process in topological passes
-    let mut changed = true;
-    let mut passes = 0usize;
-    while changed && passes <= n + 1 {
-        changed = false;
-        passes += 1;
+    // BFS layering: assign layer on FIRST discovery only (ignores back-edges)
+    let mut visited = vec![false; n];
+    let mut queue = std::collections::VecDeque::new();
+    for i in 0..n {
+        if indeg[i] == 0 { queue.push_back(i); }
+    }
+    if queue.is_empty() && n > 0 { queue.push_back(0); }
+    while let Some(idx) = queue.pop_front() {
+        if visited[idx] { continue; }
+        visited[idx] = true;
         for e in &d.edges {
-            if layer[e.to] < layer[e.from].saturating_add(1) {
-                layer[e.to] = layer[e.from].saturating_add(1);
-                changed = true;
+            if e.from == idx && !visited[e.to] {
+                layer[e.to] = layer[idx] + 1;
+                queue.push_back(e.to);
             }
         }
     }
-    let max_layer = layer.iter().copied().max().unwrap_or(0);
-    let _ = max_layer;
-    // cap layers (handles cycles so the layout stays compact)
-    let cap = (n.saturating_sub(1)) as i32;
-    for l in layer.iter_mut() {
-        *l = (*l).min(cap);
+    // unvisited nodes (in pure cycles): assign after the last layer
+    let mut max_l = layer.iter().copied().max().unwrap_or(0);
+    for i in 0..n {
+        if !visited[i] { max_l += 1; layer[i] = max_l; }
     }
     let max_layer = layer.iter().copied().max().unwrap_or(0);
     let nlayers = (max_layer + 1) as usize;
@@ -1134,6 +1136,18 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
     let mut labels: Vec<(i32, i32, String, Color)> = Vec::new();
     // grid disabled — adds noise in narrow preview panes
     for e in &d.edges {
+        // Skip self-loops — render as annotation instead
+        if e.from == e.to {
+            if let Some(lab) = &e.label {
+                let n = &d.nodes[e.from];
+                let lx = x0 + n.x + n.w + 1;
+                let ly = y0 + n.y + 1;
+                for (k, c) in lab.chars().enumerate() {
+                    put(buf, lx + k as i32, ly, c, Style::default().fg(label_col));
+                }
+            }
+            continue;
+        }
         let a = &d.nodes[e.from];
         let b = &d.nodes[e.to];
         // edge color (pinstar: per-edge color overrides default)
@@ -1201,13 +1215,16 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
         if let Some(lab) = &e.label {
             let jy = if vert { if sy < ty { ty - 1 } else { ty + 1 } } else { 0 };
             let jx = if !vert { if sx < tx { tx - 1 } else { tx + 1 } } else { 0 };
+            let tlab = truncate_label(lab, 18);
+            let lw = unicode_width::UnicodeWidthStr::width(tlab.as_str()) as i32;
             let lx = if vert {
-                x0 + (sx + tx) / 2 - (lab.chars().count() as i32) / 2
+                // Center label on the horizontal jog midpoint (unique per edge)
+                x0 + (sx + tx) / 2 - lw / 2
             } else {
                 x0 + jx + 1
             };
             let ly = if vert { y0 + jy } else { y0 + (sy + ty) / 2 };
-            labels.push((lx, ly, lab.clone(), label_col));
+            labels.push((lx, ly, tlab, label_col));
         }
     }
 
@@ -1287,18 +1304,44 @@ fn draw_node(
     let _ = fg;
 }
 
+/// Truncate a label to a maximum display width (CJK = 2 cells), appending …
+fn truncate_label(s: &str, max_width: i32) -> String {
+    let mut w = 0i32;
+    let mut out = String::new();
+    for c in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as i32;
+        if w + cw > max_width - 1 { out.push('…'); break; }
+        out.push(c);
+        w += cw;
+    }
+    out
+}
+
 fn write_label(buf: &mut Buffer, x: i32, y: i32, label: &str, inner: i32, style: Style, clip: ratatui::layout::Rect) {
-    let chars: Vec<char> = label.chars().take(inner.max(0) as usize).collect();
-    let pad = (inner - chars.len() as i32).max(0) / 2;
-    for (k, c) in chars.iter().enumerate() {
-        let xx = x + pad + k as i32;
-        if xx < clip.x as i32 || y < clip.y as i32
-            || xx >= (clip.x + clip.width) as i32
+    // Truncate by DISPLAY width (CJK chars = 2 cells each)
+    let mut chars: Vec<char> = Vec::new();
+    let mut w = 0i32;
+    for c in label.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as i32;
+        if w + cw > inner { break; }
+        chars.push(c);
+        w += cw;
+    }
+    let pad = (inner - w).max(0) / 2;
+    for c in &chars {
+        let cw = unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1) as i32;
+        let _ = cw;
+    }
+    let mut xpos = x + pad;
+    for c in &chars {
+        if xpos < clip.x as i32 || y < clip.y as i32
+            || xpos >= (clip.x + clip.width) as i32
             || y >= (clip.y + clip.height) as i32
-        { continue; }
-        let cell = &mut buf[(xx as u16, y as u16)];
+        { xpos += unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1) as i32; continue; }
+        let cell = &mut buf[(xpos as u16, y as u16)];
         cell.set_char(*c);
         cell.set_style(style);
+        xpos += unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1) as i32;
     }
 }
 

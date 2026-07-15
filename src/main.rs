@@ -595,6 +595,8 @@ fn osc52_copy(text: &str) {
     let _ = io::stdout().flush();
 }
 
+/// Truncate a label to a maximum display width (CJK = 2 cells), appending …
+
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
