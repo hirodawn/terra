@@ -981,8 +981,8 @@ fn layout(d: &mut Diagram, area_w: i32) {
     }
     // positions: non-overlapping grid (col = order within layer), then center the
     // whole drawing horizontally.
-    let gap_n = 4i32;
-    let gap_l = 4i32;
+    let gap_n = 2i32;
+    let gap_l = 2i32;
     let max_node_w = d.nodes.iter().map(|nd| nd.w).max().unwrap_or(1);
     let max_node_h = d.nodes.iter().map(|nd| nd.h).max().unwrap_or(1);
     let col_w = max_node_w + gap_n;
@@ -1115,7 +1115,11 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
     let y0 = area.y as i32 + 1;
 
     let put = |buf: &mut Buffer, x: i32, y: i32, ch: char, s: Style| {
-        if x < 0 || y < 0 || x >= buf.area.width as i32 || y >= buf.area.height as i32 {
+        // clip to the diagram's area rect (the card body)
+        if x < area.x as i32 || y < area.y as i32
+            || x >= (area.x + area.width) as i32
+            || y >= (area.y + area.height) as i32
+        {
             return;
         }
         let cell = &mut buf[(x as u16, y as u16)];
@@ -1123,8 +1127,8 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
         cell.set_style(s);
     };
 
-    // draw edges first (so nodes overlap endpoints)
-    draw_grid(buf, area, Color::Rgb(34, 38, 50));
+    // draw edges (so nodes overlap endpoints)
+    // grid disabled — adds noise in narrow preview panes
     for e in &d.edges {
         let a = &d.nodes[e.from];
         let b = &d.nodes[e.to];
@@ -1212,82 +1216,45 @@ fn draw_node(
 ) {
     let w = node.w;
     let inner = (w - 2).max(1);
-    let style = Style::default().fg(fg).bg(bg);
-    // pinstar-style: per-node color overrides the accent border.
     let border_color = parse_color(node.color.as_deref()).unwrap_or(accent);
     let border = Style::default().fg(border_color).bg(bg);
+    let label_style = Style::default().fg(border_color).bg(bg);
     let put = |buf: &mut Buffer, xx: i32, yy: i32, ch: char, s: Style| {
-        if xx < 0 || yy < 0 || xx >= buf.area.width as i32 || yy >= buf.area.height as i32 {
-            return;
-        }
-        let cell = &mut buf[(xx as u16, yy as u16)];
-        cell.set_char(ch);
-        cell.set_style(s);
+        if xx < 0 || yy < 0 || xx >= buf.area.width as i32 || yy >= buf.area.height as i32 { return; }
+        let c = &mut buf[(xx as u16, yy as u16)]; c.set_char(ch); c.set_style(s);
     };
     match node.shape {
         Shape::Rect => {
-            // Braille-traced rectangle (pinstar flowchart style)
-            let lx = x as f64;
-            let rx = (x + w) as f64;
-            let ty = y as f64;
-            let by = (y + node.h) as f64;
-            trace_line(buf, lx, ty, rx, ty, border_color);
-            trace_line(buf, rx, ty, rx, by, border_color);
-            trace_line(buf, rx, by, lx, by, border_color);
-            trace_line(buf, lx, by, lx, ty, border_color);
-            write_label(buf, x + 1, y + 1, &node.label, inner, Style::default().fg(border_color).bg(bg));
+            put(buf, x, y, '┌', border); put(buf, x+w-1, y, '┐', border);
+            put(buf, x, y+2, '└', border); put(buf, x+w-1, y+2, '┘', border);
+            for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
+            put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style);
         }
         Shape::Round | Shape::Stadium | Shape::Circle => {
-            // Traced smooth outline via braille dots, plus a label row.
-            let lx = x as f64;
-            let rx = (x + w) as f64;
-            let ty = y as f64;
-            let by = (y + 3) as f64;
-            let cx = (lx + rx) / 2.0;
-            let cy = (ty + by) / 2.0;
-            let rrx = (rx - lx) / 2.0;
-            let rry = (by - ty) / 2.0;
-            if matches!(node.shape, Shape::Circle) {
-                trace_arc(buf, cx, cy, rrx, rry, 0.0, 2.0 * std::f64::consts::PI, border_color);
-            } else {
-                // stadium: flat top/bottom + two half-arc caps
-                let cap = rry;
-                trace_line(buf, lx + cap, ty, rx - cap, ty, border_color);
-                trace_line(buf, lx + cap, by, rx - cap, by, border_color);
-                trace_arc(buf, rx - cap, cy, cap, cap, -std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2, border_color);
-                trace_arc(buf, lx + cap, cy, cap, cap, std::f64::consts::FRAC_PI_2, 3.0 * std::f64::consts::FRAC_PI_2, border_color);
-            }
-            write_label(buf, x + 1, y + 1, &node.label, inner, Style::default().fg(border_color).bg(bg));
+            put(buf, x, y, '╭', border); put(buf, x+w-1, y, '╮', border);
+            put(buf, x, y+2, '╰', border); put(buf, x+w-1, y+2, '╯', border);
+            for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
+            put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style);
         }
         Shape::Cylinder => {
-            let lx = x as f64;
-            let rx = (x + w) as f64;
-            let ty = y as f64;
-            let by = (y + 3) as f64;
-            let cx = (lx + rx) / 2.0;
-            let cap = 0.65f64;
-            trace_line(buf, lx, ty + cap, lx, by - cap, border_color);
-            trace_line(buf, rx, ty + cap, rx, by - cap, border_color);
-            trace_arc(buf, cx, ty + cap, (rx - lx) / 2.0, cap, 0.0, 2.0 * std::f64::consts::PI, border_color);
-            trace_arc(buf, cx, by - cap, (rx - lx) / 2.0, cap, 0.0, std::f64::consts::PI, border_color);
-            write_label(buf, x + 1, y + 1, &node.label, inner, Style::default().fg(border_color).bg(bg));
+            put(buf, x, y, '╭', border); put(buf, x+w-1, y, '╮', border);
+            put(buf, x, y+2, '╰', border); put(buf, x+w-1, y+2, '╯', border);
+            for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
+            put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style);
         }
         Shape::Diamond => {
-            // Traced diamond: four diagonals to a center point.
-            let lx = x as f64;
-            let rx = (x + w) as f64;
-            let ty = y as f64;
-            let by = (y + 3) as f64;
-            let mid_x = (lx + rx) / 2.0;
-            let mid_y = (ty + by) / 2.0;
-            trace_line(buf, mid_x, ty, rx, mid_y, border_color);
-            trace_line(buf, rx, mid_y, mid_x, by, border_color);
-            trace_line(buf, mid_x, by, lx, mid_y, border_color);
-            trace_line(buf, lx, mid_y, mid_x, ty, border_color);
-            write_label(buf, x + 1, y + 1, &node.label, inner, Style::default().fg(border_color).bg(bg));
+            put(buf, x+1, y, '╱', border); put(buf, x+w-2, y, '╲', border);
+            for i in 2..w-2 { put(buf, x+i, y, '─', border); }
+            put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style);
+            put(buf, x+1, y+2, '╲', border); put(buf, x+w-2, y+2, '╱', border);
+            for i in 2..w-2 { put(buf, x+i, y+2, '─', border); }
         }
     }
-    let _ = (fg, Style::default().add_modifier(Modifier::BOLD));
+    let _ = fg;
 }
 
 fn write_label(buf: &mut Buffer, x: i32, y: i32, label: &str, inner: i32, style: Style) {
