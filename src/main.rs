@@ -17,7 +17,7 @@ use crossterm::execute;
 use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -128,9 +128,7 @@ fn main() -> io::Result<()> {
 
 fn setup_terminal() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    // Mouse capture disabled by default — enables native terminal text selection
-    // in both editor and preview panes. Press F2 to toggle mouse mode.
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     Ok(())
 }
 
@@ -502,31 +500,123 @@ fn handle_mouse(m: MouseEvent, app: &mut App) {
         MouseEventKind::ScrollDown => {
             if app.focus == Focus::Preview {
                 let max = app.preview_content_height.saturating_sub(app.preview_height);
-                if app.preview_scroll < max {
-                    app.preview_scroll += 1;
-                }
-            } else {
-                app.display_down();
-            }
+                if app.preview_scroll < max { app.preview_scroll += 1; }
+            } else { app.display_down(); }
         }
         MouseEventKind::ScrollUp => {
             if app.focus == Focus::Preview {
                 app.preview_scroll = app.preview_scroll.saturating_sub(1);
-            } else {
-                app.display_up();
-            }
+            } else { app.display_up(); }
         }
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-            // click in the editor pane → position cursor there
-            if m.column < app.ei_x + app.ei_w {
+            // Start text selection within the clicked pane
+            let pane = if m.column < app.ei_x + app.ei_w { 0u8 } else { 1u8 };
+            app.sel_pane = pane;
+            app.sel_start = Some((m.column, m.row));
+            app.sel_end = Some((m.column, m.row));
+            // also handle click-to-cursor in editor
+            if pane == 0 {
                 app.focus = Focus::Editor;
                 app.click_editor(m.column, m.row);
             } else {
                 app.focus = Focus::Preview;
             }
         }
+        MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+            // Extend selection, clamped to the pane where it started
+            if let Some(_) = app.sel_start {
+                let (cx, cy) = clamp_to_pane(app, m.column, m.row);
+                app.sel_end = Some((cx, cy));
+            }
+        }
+        MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+            // Copy selected text to clipboard via OSC52
+            if let (Some((sx, sy)), Some((ex, ey))) = (app.sel_start, app.sel_end) {
+                if (sx, sy) != (ex, ey) {
+                    let text = extract_selection_text(app, sx, sy, ex, ey);
+                    if !text.is_empty() {
+                        osc52_copy(&text);
+                        app.set_status("copied to clipboard");
+                    }
+                }
+            }
+            app.sel_start = None;
+            app.sel_end = None;
+        }
         _ => {}
     }
+}
+
+fn clamp_to_pane(app: &App, x: u16, y: u16) -> (u16, u16) {
+    if app.sel_pane == 0 {
+        // editor pane
+        let cx = x.min(app.ei_x + app.ei_w.saturating_sub(1)).max(app.ei_x);
+        let cy = y;
+        (cx, cy)
+    } else {
+        // preview pane
+        let cx = x.min(app.pi_x + app.pi_w.saturating_sub(1)).max(app.pi_x);
+        let cy = y;
+        (cx, cy)
+    }
+}
+
+fn extract_selection_text(app: &App, sx: u16, sy: u16, ex: u16, ey: u16) -> String {
+    // We need the frame buffer, but don't have it here.
+    // Instead, extract from the buffer source text based on the pane.
+    // For the editor pane: extract from buf.text() rows.
+    // For the preview pane: extract from the rendered preview (approximate from source).
+    // Simplest: extract raw text lines from the source between selected rows.
+    if app.sel_pane == 0 {
+        // Editor: map screen rows to source lines (approximate)
+        let text = app.buf.text();
+        let lines: Vec<&str> = text.lines().collect();
+        let (lo_y, hi_y) = if sy <= ey { (sy, ey) } else { (ey, sy) };
+        let scroll = app.editor_scroll;
+        let mut result = Vec::new();
+        for row in lo_y..=hi_y {
+            let line_idx = row as usize + scroll;
+            if line_idx < lines.len() {
+                result.push(lines[line_idx]);
+            }
+        }
+        result.join("\n")
+    } else {
+        // Preview: extract from source text (the whole thing for now)
+        app.buf.text()
+    }
+}
+
+fn osc52_copy(text: &str) {
+    // OSC52: \x1b]52;c;<base64>\x1b\\
+    let b64 = base64_encode(text.as_bytes());
+    // Write to stdout (the terminal will intercept OSC52)
+    let _ = write!(io::stdout(), "\x1b]52;c;{}\x1b\\", b64);
+    let _ = io::stdout().flush();
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(n & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn dump_frame(app: &mut App, width: u16, height: u16) -> io::Result<()> {

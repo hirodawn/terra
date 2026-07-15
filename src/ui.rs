@@ -26,6 +26,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_title_bar(f, app, chunks[0]);
     draw_main(f, app, chunks[1]);
     draw_status_bar(f, app, chunks[2]);
+    draw_selection(f, app);
 
     if app.show_help {
         draw_help(f, area);
@@ -35,6 +36,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.in_command {
         // cursor in command line is the status bar; handled separately
+    }
+}
+
+fn draw_selection(f: &mut Frame, app: &App) {
+    if let (Some((sx, sy)), Some((ex, ey))) = (app.sel_start, app.sel_end) {
+        let (lo_x, hi_x) = if sx <= ex { (sx, ex) } else { (ex, sx) };
+        let (lo_y, hi_y) = if sy <= ey { (sy, ey) } else { (ey, sy) };
+        for y in lo_y..=hi_y {
+            for x in lo_x..=hi_x {
+                if x < f.area().width && y < f.area().height {
+                    let cell = &mut f.buffer_mut()[(x, y)];
+                    let s = cell.style();
+                    let fg = s.fg.unwrap_or(Color::Reset);
+                    let bg = s.bg.unwrap_or(Color::Reset);
+                    cell.set_style(Style::default().fg(bg).bg(fg));
+                }
+            }
+        }
     }
 }
 
@@ -198,6 +217,9 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
             Style::default().fg(if focused { Color::Black } else { Color::DarkGray }).bg(if focused { accent } else { Color::Reset }),
         ));
     let inner = border.inner(area);
+    app.pi_x = inner.x;
+    app.pi_y = inner.y;
+    app.pi_w = inner.width;
     f.render_widget(border, area);
 
     // CSS-grade renderer paints directly into the buffer.

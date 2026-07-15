@@ -73,6 +73,15 @@ pub struct App {
     pub ei_x: u16,
     pub ei_y: u16,
     pub ei_w: u16,
+    /// Preview pane rect for mouse hit-testing.
+    pub pi_x: u16,
+    pub pi_y: u16,
+    pub pi_w: u16,
+    /// Text selection state: start/end in absolute screen coords.
+    pub sel_start: Option<(u16, u16)>,
+    pub sel_end: Option<(u16, u16)>,
+    /// Which pane the selection is in (0=editor, 1=preview).
+    pub sel_pane: u8,
     /// Window sizes updated each frame by the UI.
     pub editor_height: usize,
     pub editor_width: usize,
@@ -119,6 +128,12 @@ impl App {
             ei_x: 0,
             ei_y: 0,
             ei_w: 0,
+            pi_x: 0,
+            pi_y: 0,
+            pi_w: 0,
+            sel_start: None,
+            sel_end: None,
+            sel_pane: 0,
             editor_height: 0,
             editor_width: 0,
             preview_height: 0,
