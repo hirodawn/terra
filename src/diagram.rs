@@ -506,17 +506,18 @@ fn state_node(s: &str, is_source: bool) -> (String, Shape, Option<String>) {
 }
 
 fn find_arrow(s: &str) -> Option<usize> {
-    // find the first occurrence of an arrow made of - and > (e.g. -->, ->, -.->, ==>)
-    let bytes: Vec<char> = s.chars().collect();
+    // find the first arrow (--> | -> | -.-> | ==> etc.) and return its BYTE index
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
     let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == '-' || bytes[i] == '=' {
-            let start = i;
-            while i < bytes.len() && (bytes[i] == '-' || bytes[i] == '=' || bytes[i] == '.' || bytes[i] == '>') {
+    while i < chars.len() {
+        if chars[i].1 == '-' || chars[i].1 == '=' {
+            let start_byte = chars[i].0;
+            let start_char = i;
+            while i < chars.len() && (chars[i].1 == '-' || chars[i].1 == '=' || chars[i].1 == '.' || chars[i].1 == '>') {
                 i += 1;
             }
-            if bytes[start..i].iter().any(|&c| c == '>') {
-                return Some(start);
+            if chars[start_char..i].iter().any(|(_, c)| *c == '>') {
+                return Some(start_byte); // BYTE index — safe for split_at
             }
         } else {
             i += 1;
@@ -526,7 +527,11 @@ fn find_arrow(s: &str) -> Option<usize> {
 }
 
 fn arrow_len(s: &str) -> usize {
-    s.chars().take_while(|&c| c == '-' || c == '=' || c == '.' || c == '>').count()
+    // return the BYTE length of the leading arrow characters
+    s.chars()
+        .take_while(|&c| c == '-' || c == '=' || c == '.' || c == '>')
+        .map(|c| c.len_utf8())
+        .sum()
 }
 
 // ---------------- Mermaid class diagram (subset) ----------------
