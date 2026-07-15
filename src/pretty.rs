@@ -648,7 +648,10 @@ impl<'a> Painter<'a> {
         self.advance();
         // body: paint the diagram using ABSOLUTE screen coords (render_block draws
         // directly into the buffer at absolute positions).
-        let body_y_abs = self.screen_y(self.y).unwrap_or(self.area.y);
+        let body_y_abs = match self.screen_y(self.y) {
+            Some(y) => y,
+            None => { self.advance(); return; }  // card scrolled out of view — skip
+        };
         let body_h = (self.max_y as i64 - body_y_abs as i64).max(1) as u16;
         let body_rect = ratatui::layout::Rect { x: self.x0, y: body_y_abs, width: w, height: body_h };
         let h = crate::diagram::render_block(self.buf, body_rect, lang, code);

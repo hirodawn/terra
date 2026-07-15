@@ -1199,7 +1199,7 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
 
     // draw nodes
     for node in &d.nodes {
-        draw_node(buf, x0 + node.x, y0 + node.y, node, node_fg, node_bg, accent);
+        draw_node(buf, x0 + node.x, y0 + node.y, node, node_fg, node_bg, accent, area);
     }
 
     height
@@ -1213,6 +1213,7 @@ fn draw_node(
     fg: Color,
     bg: Color,
     accent: Color,
+    clip: ratatui::layout::Rect,
 ) {
     let w = node.w;
     let inner = (w - 2).max(1);
@@ -1220,7 +1221,10 @@ fn draw_node(
     let border = Style::default().fg(border_color).bg(bg);
     let label_style = Style::default().fg(border_color).bg(bg);
     let put = |buf: &mut Buffer, xx: i32, yy: i32, ch: char, s: Style| {
-        if xx < 0 || yy < 0 || xx >= buf.area.width as i32 || yy >= buf.area.height as i32 { return; }
+        if xx < clip.x as i32 || yy < clip.y as i32
+            || xx >= (clip.x + clip.width) as i32
+            || yy >= (clip.y + clip.height) as i32
+        { return; }
         let c = &mut buf[(xx as u16, yy as u16)]; c.set_char(ch); c.set_style(s);
     };
     match node.shape {
@@ -1229,27 +1233,27 @@ fn draw_node(
             put(buf, x, y+2, '└', border); put(buf, x+w-1, y+2, '┘', border);
             for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
             put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
-            write_label(buf, x+1, y+1, &node.label, inner, label_style);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style, clip);
         }
         Shape::Round | Shape::Stadium | Shape::Circle => {
             put(buf, x, y, '╭', border); put(buf, x+w-1, y, '╮', border);
             put(buf, x, y+2, '╰', border); put(buf, x+w-1, y+2, '╯', border);
             for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
             put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
-            write_label(buf, x+1, y+1, &node.label, inner, label_style);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style, clip);
         }
         Shape::Cylinder => {
             put(buf, x, y, '╭', border); put(buf, x+w-1, y, '╮', border);
             put(buf, x, y+2, '╰', border); put(buf, x+w-1, y+2, '╯', border);
             for i in 1..w-1 { put(buf, x+i, y, '─', border); put(buf, x+i, y+2, '─', border); }
             put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
-            write_label(buf, x+1, y+1, &node.label, inner, label_style);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style, clip);
         }
         Shape::Diamond => {
             put(buf, x+1, y, '╱', border); put(buf, x+w-2, y, '╲', border);
             for i in 2..w-2 { put(buf, x+i, y, '─', border); }
             put(buf, x, y+1, '│', border); put(buf, x+w-1, y+1, '│', border);
-            write_label(buf, x+1, y+1, &node.label, inner, label_style);
+            write_label(buf, x+1, y+1, &node.label, inner, label_style, clip);
             put(buf, x+1, y+2, '╲', border); put(buf, x+w-2, y+2, '╱', border);
             for i in 2..w-2 { put(buf, x+i, y+2, '─', border); }
         }
@@ -1257,14 +1261,15 @@ fn draw_node(
     let _ = fg;
 }
 
-fn write_label(buf: &mut Buffer, x: i32, y: i32, label: &str, inner: i32, style: Style) {
+fn write_label(buf: &mut Buffer, x: i32, y: i32, label: &str, inner: i32, style: Style, clip: ratatui::layout::Rect) {
     let chars: Vec<char> = label.chars().take(inner.max(0) as usize).collect();
     let pad = (inner - chars.len() as i32).max(0) / 2;
     for (k, c) in chars.iter().enumerate() {
         let xx = x + pad + k as i32;
-        if xx < 0 || y < 0 || xx >= buf.area.width as i32 || y >= buf.area.height as i32 {
-            continue;
-        }
+        if xx < clip.x as i32 || y < clip.y as i32
+            || xx >= (clip.x + clip.width) as i32
+            || y >= (clip.y + clip.height) as i32
+        { continue; }
         let cell = &mut buf[(xx as u16, y as u16)];
         cell.set_char(*c);
         cell.set_style(style);
