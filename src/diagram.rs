@@ -982,7 +982,7 @@ fn layout(d: &mut Diagram, area_w: i32) {
     // positions: non-overlapping grid (col = order within layer), then center the
     // whole drawing horizontally.
     let gap_n = 2i32;
-    let gap_l = 2i32;
+    let gap_l = 3i32;
     let max_node_w = d.nodes.iter().map(|nd| nd.w).max().unwrap_or(1);
     let max_node_h = d.nodes.iter().map(|nd| nd.h).max().unwrap_or(1);
     let col_w = max_node_w + gap_n;
@@ -994,16 +994,18 @@ fn layout(d: &mut Diagram, area_w: i32) {
             let total_w = col_w * max_cols as i32;
             let x_off = ((area_w - total_w) / 2).max(0);
             for (li, b) in buckets.iter().enumerate() {
+                let layer_y = if d.dir == Dir::BT { nlayers - 1 - li } else { li };
                 for (ci, &i) in b.iter().enumerate() {
                     d.nodes[i].x = x_off + (ci as i32) * col_w;
-                    d.nodes[i].y = (li as i32) * row_h;
+                    d.nodes[i].y = (layer_y as i32) * row_h;
                 }
             }
         }
         Dir::LR | Dir::RL => {
             for (li, b) in buckets.iter().enumerate() {
+                let layer_x = if d.dir == Dir::RL { nlayers - 1 - li } else { li };
                 for (ci, &i) in b.iter().enumerate() {
-                    d.nodes[i].x = (li as i32) * col_w;
+                    d.nodes[i].x = (layer_x as i32) * col_w;
                     d.nodes[i].y = (ci as i32) * row_h;
                 }
             }
@@ -1129,6 +1131,7 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
 
     // draw edges (so nodes overlap endpoints) — collect arrowheads for later
     let mut arrows: Vec<(i32, i32, char, Color)> = Vec::new();
+    let mut labels: Vec<(i32, i32, String, Color)> = Vec::new();
     // grid disabled — adds noise in narrow preview panes
     for e in &d.edges {
         let a = &d.nodes[e.from];
@@ -1145,56 +1148,66 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
             Dir::RL => (a.x, a.y + a.h / 2, b.x + b.w, b.y + b.h / 2, '◀'),
         };
         let vert = !d.dir.horizontal();
-        let mid = if vert { (sy + ty) / 2 } else { (sx + tx) / 2 };
         let hch = dash.unwrap_or('─');
         let vch = dash.unwrap_or('│');
         if vert {
-            // down/up from sy..mid
-            let (lo, hi) = if sy < ty { (sy + 1, mid) } else { (mid, sy - 1) };
-            for yy in lo..=hi { put(buf, x0 + sx, y0 + yy, vch, style); }
+            // Vertical edge: source (sx,sy) → target (tx,ty)
+            // Use junction_y = just above target (robust for any distance)
+            let junction_y = if sy < ty { ty - 1 } else { ty + 1 };
+            // 1. vertical from source to junction (at sx)
             if sx != tx {
+                let (vlo, vhi) = if sy < junction_y { (sy + 1, junction_y) } else { (junction_y, sy - 1) };
+                for yy in vlo..=vhi { put(buf, x0 + sx, y0 + yy, vch, style); }
+                // 2. horizontal jog at junction_y
                 let (xlo, xhi) = if sx < tx { (sx, tx) } else { (tx, sx) };
-                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + mid, hch, style); }
-                put(buf, x0 + sx, y0 + mid, if sx < tx { '┐' } else { '┌' }, style);
-                put(buf, x0 + tx, y0 + mid, if sx < tx { '└' } else { '┘' }, style);
-                let (ylo, yhi) = if mid < ty { (mid + 1, ty - 1) } else { (ty + 1, mid - 1) };
-                for yy in ylo..=yhi { put(buf, x0 + tx, y0 + yy, vch, style); }
+                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + junction_y, hch, style); }
+                // corners
+                put(buf, x0 + sx, y0 + junction_y, if sx < tx { '└' } else { '┘' }, style);
+                put(buf, x0 + tx, y0 + junction_y, if sx < tx { '┐' } else { '┌' }, style);
+                // 3. vertical from junction to target (at tx) — may be empty if adjacent
+                if junction_y + 1 <= ty - 1 {
+                    for yy in (junction_y + 1)..ty { put(buf, x0 + tx, y0 + yy, vch, style); }
+                } else if junction_y - 1 >= ty + 1 {
+                    for yy in (ty + 1)..junction_y { put(buf, x0 + tx, y0 + yy, vch, style); }
+                }
             } else {
-                let (ylo, yhi) = if mid < ty { (mid + 1, ty - 1) } else { (ty + 1, mid - 1) };
-                for yy in ylo..=yhi { put(buf, x0 + tx, y0 + yy, vch, style); }
+                // same column: straight vertical
+                let (vlo, vhi) = if sy < ty { (sy + 1, ty - 1) } else { (ty + 1, sy - 1) };
+                for yy in vlo..=vhi { put(buf, x0 + tx, y0 + yy, vch, style); }
             }
             arrows.push((x0 + tx, y0 + ty, arr, accent));
         } else {
-            let (lo, hi) = if sx < tx { (sx + 1, mid) } else { (mid, sx - 1) };
-            for xx in lo..=hi { put(buf, x0 + xx, y0 + sy, hch, style); }
+            // Horizontal edge: source (sx,sy) → target (tx,ty)
+            let junction_x = if sx < tx { tx - 1 } else { tx + 1 };
             if sy != ty {
+                let (hlo, hhi) = if sx < junction_x { (sx + 1, junction_x) } else { (junction_x, sx - 1) };
+                for xx in hlo..=hhi { put(buf, x0 + xx, y0 + sy, hch, style); }
                 let (ylo, yhi) = if sy < ty { (sy, ty) } else { (ty, sy) };
-                for yy in ylo..=yhi { put(buf, x0 + mid, y0 + yy, vch, style); }
-                put(buf, x0 + mid, y0 + sy, if sy < ty { '┘' } else { '┐' }, style);
-                put(buf, x0 + mid, y0 + ty, if sy < ty { '┌' } else { '┘' }, style);
-                let (xlo, xhi) = if mid < tx { (mid + 1, tx - 1) } else { (tx + 1, mid - 1) };
-                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + ty, hch, style); }
+                for yy in ylo..=yhi { put(buf, x0 + junction_x, y0 + yy, vch, style); }
+                put(buf, x0 + junction_x, y0 + sy, if sy < ty { '┘' } else { '┐' }, style);
+                put(buf, x0 + junction_x, y0 + ty, if sy < ty { '┌' } else { '┘' }, style);
+                if junction_x + 1 <= tx - 1 {
+                    for xx in (junction_x + 1)..tx { put(buf, x0 + xx, y0 + ty, hch, style); }
+                } else if junction_x - 1 >= tx + 1 {
+                    for xx in (tx + 1)..junction_x { put(buf, x0 + xx, y0 + ty, hch, style); }
+                }
             } else {
-                let (xlo, xhi) = if mid < tx { (mid + 1, tx - 1) } else { (tx + 1, mid - 1) };
-                for xx in xlo..=xhi { put(buf, x0 + xx, y0 + ty, hch, style); }
+                let (hlo, hhi) = if sx < tx { (sx + 1, tx - 1) } else { (tx + 1, sx - 1) };
+                for xx in hlo..=hhi { put(buf, x0 + xx, y0 + ty, hch, style); }
             }
             arrows.push((x0 + tx, y0 + ty, arr, accent));
         }
-        // edge label
+        // edge labels collected for final pass (avoids overwrite by later edges)
         if let Some(lab) = &e.label {
+            let jy = if vert { if sy < ty { ty - 1 } else { ty + 1 } } else { 0 };
+            let jx = if !vert { if sx < tx { tx - 1 } else { tx + 1 } } else { 0 };
             let lx = if vert {
                 x0 + (sx + tx) / 2 - (lab.chars().count() as i32) / 2
             } else {
-                x0 + mid + 1
+                x0 + jx + 1
             };
-            let ly = if vert {
-                y0 + mid - 1
-            } else {
-                y0 + (sy + ty) / 2
-            };
-            for (k, c) in lab.chars().enumerate() {
-                put(buf, lx + k as i32, ly, c, Style::default().fg(label_col));
-            }
+            let ly = if vert { y0 + jy } else { y0 + (sy + ty) / 2 };
+            labels.push((lx, ly, lab.clone(), label_col));
         }
     }
 
@@ -1206,6 +1219,13 @@ fn draw(buf: &mut Buffer, area: ratatui::layout::Rect, d: &Diagram) -> usize {
     // draw arrowheads AFTER nodes (so they're not overwritten by borders)
     for (ax, ay, ach, acol) in &arrows {
         put(buf, *ax, *ay, *ach, Style::default().fg(*acol));
+    }
+
+    // draw labels LAST (so nothing overwrites them)
+    for (lx, ly, lab, lcol) in &labels {
+        for (k, c) in lab.chars().enumerate() {
+            put(buf, lx + k as i32, *ly, c, Style::default().fg(*lcol));
+        }
     }
 
     height
